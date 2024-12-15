@@ -26,18 +26,18 @@ typedef unsigned int chrissly_sql_error;
 typedef void(*chrissly_sql_query_callback)(unsigned int, char**, char**, void*);
 
 // initialise server and listen for client connections
-chrissly_sql_error chrissly_sql_server_open();
+chrissly_sql_error chrissly_sql_server_open(void);
 // close connections to clients
-chrissly_sql_error chrissly_sql_server_close();
+chrissly_sql_error chrissly_sql_server_close(void);
 chrissly_sql_error chrissly_sql_server_create_db(char const* file_name);
 chrissly_sql_error chrissly_sql_server_load_db(char const* file_name);
-chrissly_sql_error chrissly_sql_server_save_db();
+chrissly_sql_error chrissly_sql_server_save_db(void);
 chrissly_sql_error chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, void* user_data);
 
 // connects client to the sql server at the given ip-address/hostname
 chrissly_sql_error chrissly_sql_client_connect(char const* ip_address);
 // close connection to server
-chrissly_sql_error chrissly_sql_client_disconnect();
+chrissly_sql_error chrissly_sql_client_disconnect(void);
 // sends query and waits for the result (blocking)
 chrissly_sql_error chrissly_sql_client_query(char const* query, chrissly_sql_query_callback cb, void* user_data);
 
@@ -49,10 +49,37 @@ chrissly_sql_error chrissly_sql_client_query(char const* query, chrissly_sql_que
 //
 //------------------------------------------------------------------------------
 #ifdef CHRISSLY_SQL_IMPLEMENTATION
+#include <stdarg.h>
+#include <string.h>
 
 #ifndef CHRISSLY_SQL_LOG
-#define CHRISSLY_SQL_LOG(...) printf(__VA_ARGS__)
+static void
+chrissly_sql_log(const char* const msg, ...)
+{
+    char message[256U];
+    va_list args = NULL;
+    va_start(args, msg);
+    vsnprintf(message, 256U, msg, args);
+    va_end(args);
+    printf("chrissly_sql: %s", message);
+}
+#define CHRISSLY_SQL_LOG(...) chrissly_sql_log(__VA_ARGS__)
 #endif
+
+#define CHRISSLY_SQL_UNREFERENCED_PARAMETER(P) (P)
+
+#define DEFAULT_BUFLEN 512U
+#define MAX_CONNECTIONS 4U
+
+static char query_results[MAX_CONNECTIONS][DEFAULT_BUFLEN];
+
+static void
+server_query_result_callback(unsigned int count, char** columns, char** values, void* user_data)
+{
+    CHRISSLY_SQL_UNREFERENCED_PARAMETER(columns);
+    CHRISSLY_SQL_UNREFERENCED_PARAMETER(count);
+    (void)strcpy_s(query_results[(uintptr_t)user_data], DEFAULT_BUFLEN, values[0U]);
+}
 
 //------------------------------------------------------------------------------
 // Windows backend
@@ -60,18 +87,11 @@ chrissly_sql_error chrissly_sql_client_query(char const* query, chrissly_sql_que
 #ifdef CHRISSLY_SQL_WINDOWS
 #undef UNICODE
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <stdlib.h>
-#include <stdio.h>
 #pragma comment (lib, "Ws2_32.lib")
-#pragma comment (lib, "Mswsock.lib")
-#pragma comment (lib, "AdvApi32.lib")
 
-#define DEFAULT_BUFLEN 512U
 #define DEFAULT_PORT "27015"
-#define MAX_CONNECTIONS 4U
 
 struct client_connection
 {
@@ -83,18 +103,9 @@ static struct client_connection connections[MAX_CONNECTIONS];
 static SOCKET listen_socket = INVALID_SOCKET, connect_socket = INVALID_SOCKET;
 static HANDLE listen_socket_thread = NULL, client_connection_lock = NULL;
 
-static char query_results[MAX_CONNECTIONS][DEFAULT_BUFLEN];
-
 //------------------------------------------------------------------------------
-void
-server_query_result_callback(unsigned int count, char** columns, char** values, void* user_data)
-{
-    strcpy_s(query_results[(uintptr_t)user_data], DEFAULT_BUFLEN, values[0U]);
-}
-
-//------------------------------------------------------------------------------
-void
-invalidate_connection(unsigned int idx)
+static void
+invalidate_connection(size_t idx)
 {
     WaitForSingleObject(client_connection_lock, INFINITE);
     closesocket(connections[idx].socket);
@@ -106,10 +117,10 @@ invalidate_connection(unsigned int idx)
 
 //------------------------------------------------------------------------------
 // client thread
-DWORD WINAPI
+static DWORD WINAPI
 client_socket_thread_proc(_In_ LPVOID lpParameter)
 {
-    unsigned int idx = (unsigned int)lpParameter;
+    size_t idx = (size_t)lpParameter;
     int error = 0;
     char recv_buf[DEFAULT_BUFLEN];
     do
@@ -117,7 +128,7 @@ client_socket_thread_proc(_In_ LPVOID lpParameter)
         error = recv(connections[idx].socket, recv_buf, DEFAULT_BUFLEN, 0);
         if (error > 0)
         {
-            CHRISSLY_SQL_LOG("-> bytes received: %d\n", error);
+            CHRISSLY_SQL_LOG("query received (%d bytes)\n", error);
             recv_buf[error < DEFAULT_BUFLEN ? error : DEFAULT_BUFLEN - 1U] = '\0';
 
             chrissly_sql_server_query(recv_buf, server_query_result_callback, (void*)idx);
@@ -126,25 +137,25 @@ client_socket_thread_proc(_In_ LPVOID lpParameter)
             int send_result = send(connections[idx].socket, query_results[idx], error, 0);
             if (SOCKET_ERROR == send_result)
             {
-                CHRISSLY_SQL_LOG("-> send() failed with error: %d\n", WSAGetLastError());
+                CHRISSLY_SQL_LOG("send() failed with error: %d\n", WSAGetLastError());
                 invalidate_connection(idx);
                 return CHRISSLY_SQL_ERR;
             }
-            CHRISSLY_SQL_LOG("-> bytes sent: %d\n", send_result);
+            CHRISSLY_SQL_LOG("reply sent (%d bytes)\n", send_result);
         }
         else if (0 == error)
         {
-            // connection closing...
-            CHRISSLY_SQL_LOG("-> client %p closing connection...\n", connections[idx].socket);
+            // client closed connection
+            CHRISSLY_SQL_LOG("client %p closing connection...\n", (void*)connections[idx].socket);
             invalidate_connection(idx);
         }
         else
         {
             // error or shutdown
-            int error = WSAGetLastError();
-            if (error != WSAECONNABORTED)
+            int last_error = WSAGetLastError();
+            if (last_error != WSAECONNABORTED)
             {
-                CHRISSLY_SQL_LOG("-> recv() failed with error: %d\n", error);
+                CHRISSLY_SQL_LOG("recv() failed with error: %d\n", last_error);
                 invalidate_connection(idx);
             }
             return CHRISSLY_SQL_ERR;
@@ -156,9 +167,10 @@ client_socket_thread_proc(_In_ LPVOID lpParameter)
 
 //------------------------------------------------------------------------------
 // listen thread
-DWORD WINAPI
+static DWORD WINAPI
 listen_socket_thread_proc(_In_ LPVOID lp_parameter)
 {
+    CHRISSLY_SQL_UNREFERENCED_PARAMETER(lp_parameter);
     SOCKET client_socket = INVALID_SOCKET;
     do
     {
@@ -169,11 +181,11 @@ listen_socket_thread_proc(_In_ LPVOID lp_parameter)
             int error = WSAGetLastError();
             if (WSAEINTR == error)
             {
-                CHRISSLY_SQL_LOG("-> server closed\n");
+                CHRISSLY_SQL_LOG("server closed\n");
             }
             else
             {
-                CHRISSLY_SQL_LOG("-> accept() failed with error: %d\n", error);
+                CHRISSLY_SQL_LOG("accept() failed with error: %d\n", error);
             }
             return CHRISSLY_SQL_ERR;
         }
@@ -181,7 +193,7 @@ listen_socket_thread_proc(_In_ LPVOID lp_parameter)
         // search for free connection slot
         WaitForSingleObject(client_connection_lock, INFINITE);
         BOOL free_slot_found = FALSE;
-        unsigned int i;
+        size_t i;
         for (i = 0U; i < MAX_CONNECTIONS; ++i)
         {
             if (INVALID_SOCKET == connections[i].socket)
@@ -208,7 +220,7 @@ listen_socket_thread_proc(_In_ LPVOID lp_parameter)
 /**
 */
 chrissly_sql_error
-chrissly_sql_server_open()
+chrissly_sql_server_open(void)
 {
     memset(query_results, 0, DEFAULT_BUFLEN * MAX_CONNECTIONS);
 
@@ -227,7 +239,7 @@ chrissly_sql_server_open()
     int error = WSAStartup(MAKEWORD(2U, 2U), &wsa_data);
     if (error != 0)
     {
-        CHRISSLY_SQL_LOG("-> WSAStartup() failed with error: %d\n", error);
+        CHRISSLY_SQL_LOG("WSAStartup() failed with error: %d\n", error);
         return CHRISSLY_SQL_ERR;
     }
 
@@ -243,7 +255,7 @@ chrissly_sql_server_open()
     error = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
     if (error != 0)
     {
-        CHRISSLY_SQL_LOG("-> getaddrinfo() failed with error: %d\n", error);
+        CHRISSLY_SQL_LOG("getaddrinfo() failed with error: %d\n", error);
         WSACleanup();
         return CHRISSLY_SQL_ERR;
     }
@@ -252,7 +264,7 @@ chrissly_sql_server_open()
     listen_socket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
     if (INVALID_SOCKET == listen_socket)
     {
-        CHRISSLY_SQL_LOG("-> socket() failed with error: %ld\n", WSAGetLastError());
+        CHRISSLY_SQL_LOG("socket() failed with error: %d\n", WSAGetLastError());
         freeaddrinfo(result);
         WSACleanup();
         return CHRISSLY_SQL_ERR;
@@ -262,9 +274,10 @@ chrissly_sql_server_open()
     error = bind(listen_socket, result->ai_addr, (int)result->ai_addrlen);
     if (SOCKET_ERROR == error)
     {
-        CHRISSLY_SQL_LOG("-> bind() failed with error: %d\n", WSAGetLastError());
+        CHRISSLY_SQL_LOG("bind() failed with error: %d\n", WSAGetLastError());
         freeaddrinfo(result);
         closesocket(listen_socket);
+        listen_socket = INVALID_SOCKET;
         WSACleanup();
         return CHRISSLY_SQL_ERR;
     }
@@ -274,13 +287,14 @@ chrissly_sql_server_open()
     error = listen(listen_socket, SOMAXCONN);
     if (SOCKET_ERROR == error)
     {
-        CHRISSLY_SQL_LOG("-> listen() failed with error: %d\n", WSAGetLastError());
+        CHRISSLY_SQL_LOG("listen() failed with error: %d\n", WSAGetLastError());
         closesocket(listen_socket);
+        listen_socket = INVALID_SOCKET;
         WSACleanup();
         return CHRISSLY_SQL_ERR;
     }
 
-    // create thread that listens to incoming connections
+    // create a thread that listens to incoming connections
     listen_socket_thread = CreateThread(NULL, 0U, listen_socket_thread_proc, NULL, 0U, NULL);
 #endif
 
@@ -291,22 +305,25 @@ chrissly_sql_server_open()
 /**
 */
 chrissly_sql_error
-chrissly_sql_server_close()
+chrissly_sql_server_close(void)
 {
     chrissly_sql_error retval = CHRISSLY_SQL_OK;
 
 #ifdef CHRISSLY_SQL_WINDOWS
     // terminate listen socket thread and socket api
     closesocket(listen_socket);
+    listen_socket = INVALID_SOCKET;
     WaitForSingleObject(listen_socket_thread, INFINITE);
     CloseHandle(listen_socket_thread);
+    listen_socket_thread = NULL;
 
-    // close all pending connections
+    // terminate all client socket threads
     unsigned int i;
     for (i = 0U; i < MAX_CONNECTIONS; ++i)
     {
+        HANDLE t = NULL;
         WaitForSingleObject(client_connection_lock, INFINITE);
-        HANDLE t = connections[i].thread;
+        t = connections[i].thread;
         if (connections[i].socket != INVALID_SOCKET)
         {
             closesocket(connections[i].socket);
@@ -324,6 +341,7 @@ chrissly_sql_server_close()
 
     WSACleanup();
     CloseHandle(client_connection_lock);
+    client_connection_lock = NULL;
 #endif
 
     return retval;
@@ -335,14 +353,12 @@ chrissly_sql_server_close()
 chrissly_sql_error
 chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, void* user_data)
 {
-#ifdef CHRISSLY_SQL_WINDOWS
     if (cb != NULL)
     {
         char* columns[1U] = {"DUMMY_COLUMN"};
-        char* values[1U] = {query};
+        char* values[1U] = {(char*)query};
         cb(1U, columns, values, user_data);
     }
-#endif
 
     return CHRISSLY_SQL_OK;
 }
@@ -359,14 +375,14 @@ chrissly_sql_client_connect(char const* ip_address)
     int error = WSAStartup(MAKEWORD(2U, 2U), &wsa_data);
     if (error != 0)
     {
-        CHRISSLY_SQL_LOG("-> WSAStartup() failed with error: %d\n", error);
+        CHRISSLY_SQL_LOG("WSAStartup() failed with error: %d\n", error);
         return CHRISSLY_SQL_ERR;
     }
 
     // resolve the server address and port
     struct addrinfo hints;
     ZeroMemory(&hints, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
+    hints.ai_family   = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
 
@@ -374,7 +390,7 @@ chrissly_sql_client_connect(char const* ip_address)
     error = getaddrinfo(ip_address, DEFAULT_PORT, &hints, &result);
     if (error != 0)
     {
-        CHRISSLY_SQL_LOG("-> getaddrinfo() failed with error: %d\n", error);
+        CHRISSLY_SQL_LOG("getaddrinfo() failed with error: %d\n", error);
         WSACleanup();
         return CHRISSLY_SQL_ERR;
     }
@@ -387,7 +403,7 @@ chrissly_sql_client_connect(char const* ip_address)
         connect_socket = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
         if (INVALID_SOCKET == connect_socket)
         {
-            CHRISSLY_SQL_LOG("-> socket() failed with error: %ld\n", WSAGetLastError());
+            CHRISSLY_SQL_LOG("socket() failed with error: %ld\n", WSAGetLastError());
             WSACleanup();
             return CHRISSLY_SQL_ERR;
         }
@@ -407,7 +423,7 @@ chrissly_sql_client_connect(char const* ip_address)
 
     if (INVALID_SOCKET == connect_socket)
     {
-        CHRISSLY_SQL_LOG("-> unable to connect to server!\n");
+        CHRISSLY_SQL_LOG("unable to connect to server!\n");
         WSACleanup();
         return CHRISSLY_SQL_ERR;
     }
@@ -420,7 +436,7 @@ chrissly_sql_client_connect(char const* ip_address)
 /**
 */
 chrissly_sql_error
-chrissly_sql_client_disconnect()
+chrissly_sql_client_disconnect(void)
 {
     chrissly_sql_error retval = CHRISSLY_SQL_OK;
 
@@ -429,12 +445,13 @@ chrissly_sql_client_disconnect()
     int error = shutdown(connect_socket, SD_SEND);
     if (SOCKET_ERROR == error)
     {
-        CHRISSLY_SQL_LOG("-> shutdown() failed with error: %d\n", WSAGetLastError());
+        CHRISSLY_SQL_LOG("shutdown() failed with error: %d\n", WSAGetLastError());
         retval = CHRISSLY_SQL_ERR;
     }
 
     // cleanup
     closesocket(connect_socket);
+    connect_socket = INVALID_SOCKET;
     WSACleanup();
 #endif
 
@@ -452,17 +469,25 @@ chrissly_sql_client_query(char const* query, chrissly_sql_query_callback cb, voi
     int error = send(connect_socket, query, (int)strlen(query), 0);
     if (SOCKET_ERROR == error)
     {
-        CHRISSLY_SQL_LOG("-> send() failed with error: %d\n", WSAGetLastError());
+        int last_error = WSAGetLastError();
+        if (WSAECONNRESET == last_error)
+        {
+            CHRISSLY_SQL_LOG("server closing connection...\n");
+        }
+        else
+        {
+            CHRISSLY_SQL_LOG("send() failed with error: %d\n", last_error);
+        }
         return CHRISSLY_SQL_ERR;
     }
-    CHRISSLY_SQL_LOG("-> bytes sent: %ld\n", error);
+    CHRISSLY_SQL_LOG("query sent (%d bytes)\n", error);
 
     // receive reply
     char recv_buf[DEFAULT_BUFLEN];
     error = recv(connect_socket, recv_buf, DEFAULT_BUFLEN, 0);
     if (error > 0)
     {
-        CHRISSLY_SQL_LOG("-> bytes received: %d\n", error);
+        CHRISSLY_SQL_LOG("reply received (%d bytes)\n", error);
         recv_buf[error < DEFAULT_BUFLEN ? error : DEFAULT_BUFLEN - 1U] = '\0';
         if (cb != NULL)
         {
@@ -473,11 +498,11 @@ chrissly_sql_client_query(char const* query, chrissly_sql_query_callback cb, voi
     }
     else if (0 == error)
     {
-        CHRISSLY_SQL_LOG("-> connection closed\n");
+        CHRISSLY_SQL_LOG("connection closed\n");
     }
     else
     {
-        CHRISSLY_SQL_LOG("-> recv failed with error: %d\n", WSAGetLastError());
+        CHRISSLY_SQL_LOG("recv() failed with error: %d\n", WSAGetLastError());
     }
 #endif
 

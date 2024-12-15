@@ -3,6 +3,7 @@
 //  (C) 2024 Christian Bleicher
 //------------------------------------------------------------------------------
 #include <stdio.h>
+#include <conio.h>
 #define CHRISSLY_SQL_WINDOWS
 #define CHRISSLY_SQL_IMPLEMENTATION
 #include "chrissly_sql.h"
@@ -13,10 +14,11 @@
 static void
 query_result_callback(unsigned int count, char** columns, char** values, void* user_data)
 {
+    CHRISSLY_SQL_UNREFERENCED_PARAMETER(user_data);
     unsigned int i;
     for (i = 0U; i < count; ++i)
     {
-        printf("--> query result column: %s value: %s\n", columns[i], values[i]);
+        printf("-> query result column: %s value: %s\n", columns[i], values[i]);
     }
 }
 
