@@ -105,13 +105,13 @@ static HANDLE listen_socket_thread = NULL, client_connection_lock = NULL;
 
 //------------------------------------------------------------------------------
 static void
-invalidate_connection(size_t idx)
+invalidate_connection(size_t client_index)
 {
     WaitForSingleObject(client_connection_lock, INFINITE);
-    closesocket(connections[idx].socket);
-    connections[idx].socket = INVALID_SOCKET;
-    CloseHandle(connections[idx].thread);
-    connections[idx].thread = NULL;
+    closesocket(connections[client_index].socket);
+    connections[client_index].socket = INVALID_SOCKET;
+    CloseHandle(connections[client_index].thread);
+    connections[client_index].thread = NULL;
     ReleaseMutex(client_connection_lock);
 }
 
@@ -120,25 +120,25 @@ invalidate_connection(size_t idx)
 static DWORD WINAPI
 client_socket_thread_proc(_In_ LPVOID lpParameter)
 {
-    size_t idx = (size_t)lpParameter;
+    size_t client_index = (size_t)lpParameter;
     int error = 0;
     char recv_buf[DEFAULT_BUFLEN];
     do
     {
-        error = recv(connections[idx].socket, recv_buf, DEFAULT_BUFLEN, 0);
+        error = recv(connections[client_index].socket, recv_buf, DEFAULT_BUFLEN, 0);
         if (error > 0)
         {
             CHRISSLY_SQL_LOG("query received (%d bytes)\n", error);
             recv_buf[error < DEFAULT_BUFLEN ? error : DEFAULT_BUFLEN - 1U] = '\0';
 
-            chrissly_sql_server_query(recv_buf, server_query_result_callback, (void*)idx);
+            chrissly_sql_server_query(recv_buf, server_query_result_callback, (void*)client_index);
 
             // send query result back to the client
-            int send_result = send(connections[idx].socket, query_results[idx], error, 0);
+            int send_result = send(connections[client_index].socket, query_results[client_index], error, 0);
             if (SOCKET_ERROR == send_result)
             {
                 CHRISSLY_SQL_LOG("send() failed with error: %d\n", WSAGetLastError());
-                invalidate_connection(idx);
+                invalidate_connection(client_index);
                 return CHRISSLY_SQL_ERR;
             }
             CHRISSLY_SQL_LOG("reply sent (%d bytes)\n", send_result);
@@ -146,8 +146,8 @@ client_socket_thread_proc(_In_ LPVOID lpParameter)
         else if (0 == error)
         {
             // client closed connection
-            CHRISSLY_SQL_LOG("client %p closing connection...\n", (void*)connections[idx].socket);
-            invalidate_connection(idx);
+            CHRISSLY_SQL_LOG("client %p closing connection...\n", (void*)connections[client_index].socket);
+            invalidate_connection(client_index);
         }
         else
         {
@@ -156,7 +156,7 @@ client_socket_thread_proc(_In_ LPVOID lpParameter)
             if (last_error != WSAECONNABORTED)
             {
                 CHRISSLY_SQL_LOG("recv() failed with error: %d\n", last_error);
-                invalidate_connection(idx);
+                invalidate_connection(client_index);
             }
             return CHRISSLY_SQL_ERR;
         }
@@ -498,7 +498,7 @@ chrissly_sql_client_query(char const* query, chrissly_sql_query_callback cb, voi
     }
     else if (0 == error)
     {
-        CHRISSLY_SQL_LOG("connection closed\n");
+        CHRISSLY_SQL_LOG("closing connection...\n");
     }
     else
     {
