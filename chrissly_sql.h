@@ -5,6 +5,10 @@
     A single-header file library that implements a minimal sql server
     and client.
 
+    The goal is to support the SQL-86 standard. The implementation will primarily
+    be created from the specification available here:
+    https://nvlpubs.nist.gov/nistpubs/Legacy/FIPS/fipspub127.pdf
+
     Add this line:
         #define CHRISSLY_SQL_IMPLEMENTATION
     before you include this file in *one* C or C++ file to create the implementation.
@@ -23,7 +27,7 @@ enum chrissly_sql_error_code
 };
 typedef unsigned int chrissly_sql_error;
 
-typedef void(*chrissly_sql_query_callback)(unsigned int, char**, char**, void*);
+typedef void(*chrissly_sql_query_callback)(size_t, char**, char**, void*);
 
 // initialise server and listen for client connections
 chrissly_sql_error chrissly_sql_server_open(void);
@@ -49,8 +53,14 @@ chrissly_sql_error chrissly_sql_client_query(char const* query, chrissly_sql_que
 //
 //------------------------------------------------------------------------------
 #ifdef CHRISSLY_SQL_IMPLEMENTATION
+
+//------------------------------------------------------------------------------
+// General platform agnostic stuff
+//------------------------------------------------------------------------------
 #include <stdarg.h>
 #include <string.h>
+#include <malloc.h>
+#include <stdint.h>
 
 #ifndef CHRISSLY_SQL_LOG
 static void
@@ -74,11 +84,300 @@ chrissly_sql_log(const char* const msg, ...)
 static char query_results[MAX_CONNECTIONS][DEFAULT_BUFLEN];
 
 static void
-server_query_result_callback(unsigned int count, char** columns, char** values, void* user_data)
+server_query_result_callback(size_t count, char** columns, char** values, void* user_data)
 {
-    CHRISSLY_SQL_UNREFERENCED_PARAMETER(columns);
+    CHRISSLY_SQL_UNREFERENCED_PARAMETER(values);
     CHRISSLY_SQL_UNREFERENCED_PARAMETER(count);
-    (void)strcpy_s(query_results[(uintptr_t)user_data], DEFAULT_BUFLEN, values[0U]);
+    (void)strcpy_s(query_results[(uintptr_t)user_data], DEFAULT_BUFLEN, columns[0U]);
+}
+
+//------------------------------------------------------------------------------
+// SQL definitions
+//------------------------------------------------------------------------------
+// see chapter "5.3 <token>"
+#define MAX_IDENTIFIER_LENGTH 18U
+#define SEPARATORS " \n"
+
+// specify the data types (see chapter "5.5 <data type>")
+enum data_type
+{
+    // CHARACTER [(<length>)], CHARACTER is equivalent to CHARACTER(1)
+    // implementation definition: char
+    DT_CHARACTER,
+    DT_CHAR = DT_CHARACTER,
+    // NUMERIC [(<precision> [,< scale >])], fixed-point numeric
+    // implementation definition: ? Todo
+    DT_NUMERIC,
+    // DECIMAL [(<precision> [,< scale >])], fixed-point numeric
+    // implementation definition: ? Todo
+    DT_DECIMAL,
+    DT_DEC = DT_DECIMAL,
+    // signed whole number with a scale of zero, must be greater than or equal to the precision of SMALLINT
+    // implementation definition: int32_t
+    DT_INTEGER,
+    DT_INT = DT_INTEGER,
+    // signed whole number with a scale of zero, precision must be less than or equal to the precision of INT
+    // implementation definition: int8_t
+    DT_SMALLINT,
+    // FLOAT [(<precision>)], FLOAT(24) is equivalent to 32Bit IEEE float
+    // implementation definition: ? Todo
+    DT_FLOAT,
+    // signed floating-point numeric, must be less than the precision defined for DOUBLE
+    // implementation definition: float
+    DT_REAL,
+    // DOUBLE PRECISION, signed floating-point numeric, must be greater than the precision defined for REAL
+    // implementation definition: double
+    DT_DOUBLE
+};
+
+// specify the key words (see chapter "5.3 <token>")
+enum key_word
+{
+    KW_ALL,
+    KW_AND,
+    KW_ANY,
+    KW_AS,
+    KW_ASC,
+    KW_AUTHORIZATION,
+    KW_AVG,
+    KW_BEGIN,
+    KW_BETWEEN,
+    KW_BY,
+    KW_CHAR,
+    KW_CHARACTER,
+    KW_CHECK,
+    KW_CLOSE,
+    KW_COBOL,
+    KW_COMMIT,
+    KW_CONTINUE,
+    KW_COUNT,
+    KW_CREATE,
+    KW_CURRENT,
+    KW_CURSOR,
+    KW_DEC,
+    KW_DECIMAL,
+    KW_DECLARE,
+    KW_DELETE,
+    KW_DESC,
+    KW_DISTINCT,
+    KW_DOUBLE,
+    KW_END,
+    KW_ESCAPE,
+    KW_EXEC,
+    KW_EXISTS,
+    KW_FETCH,
+    KW_FLOAT,
+    KW_FOR,
+    KW_FORTRAN,
+    KW_FOUND,
+    KW_FROM,
+    KW_GO,
+    KW_GOTO,
+    KW_GRANT,
+    KW_GROUP,
+    KW_HAVING,
+    KW_IN,
+    KW_INDICATOR,
+    KW_INSERT,
+    KW_INT,
+    KW_INTEGER,
+    KW_INTO,
+    KW_IS,
+    KW_LANGUAGE,
+    KW_LIKE,
+    KW_MAX,
+    KW_MIN,
+    KW_MODULE,
+    KW_NOT,
+    KW_NULL,
+    KW_NUMERIC,
+    KW_OF,
+    KW_ON,
+    KW_OPEN,
+    KW_OPTION,
+    KW_OR,
+    KW_ORDER,
+    KW_PASCAL,
+    KW_PLI,
+    KW_PRECISION,
+    KW_PRIVILEGES,
+    KW_PROCEDURE,
+    KW_PUBLIC,
+    KW_REAL,
+    KW_ROLLBACK,
+    KW_SCHEMA,
+    KW_SECTION,
+    KW_SELECT,
+    KW_SET,
+    KW_SMALLINT,
+    KW_SOME,
+    KW_SQL,
+    KW_SQLCODE,
+    KW_SQLERROR,
+    KW_SUM,
+    KW_TABLE,
+    KW_TO,
+    KW_UNION,
+    KW_UNIQUE,
+    KW_UPDATE,
+    KW_USER,
+    KW_VALUES,
+    KW_VIEW,
+    KW_WHENEVER,
+    KW_WHERE,
+    KW_WITH,
+    KW_WORK,
+    NUM_KEYWORDS
+};
+
+const char* key_words[NUM_KEYWORDS] =
+{
+    "ALL",
+    "AND",
+    "ANY",
+    "AS",
+    "ASC",
+    "AUTHORIZATION",
+    "AVG",
+    "BEGIN",
+    "BETWEEN",
+    "BY",
+    "CHAR",
+    "CHARACTER",
+    "CHECK",
+    "CLOSE",
+    "COBOL",
+    "COMMIT",
+    "CONTINUE",
+    "COUNT",
+    "CREATE",
+    "CURRENT",
+    "CURSOR",
+    "DEC",
+    "DECIMAL",
+    "DECLARE",
+    "DELETE",
+    "DESC",
+    "DISTINCT",
+    "DOUBLE",
+    "END",
+    "ESCAPE",
+    "EXEC",
+    "EXISTS",
+    "FETCH",
+    "FLOAT",
+    "FOR",
+    "FORTRAN",
+    "FOUND",
+    "FROM",
+    "GO",
+    "GOTO",
+    "GRANT",
+    "GROUP",
+    "HAVING",
+    "IN",
+    "INDICATOR",
+    "INSERT",
+    "INT",
+    "INTEGER",
+    "INTO",
+    "IS",
+    "LANGUAGE",
+    "LIKE",
+    "MAX",
+    "MIN",
+    "MODULE",
+    "NOT",
+    "NULL",
+    "NUMERIC",
+    "OF",
+    "ON",
+    "OPEN",
+    "OPTION",
+    "OR",
+    "ORDER",
+    "PASCAL",
+    "PLI",
+    "PRECISION",
+    "PRIVILEGES",
+    "PROCEDURE",
+    "PUBLIC",
+    "REAL",
+    "ROLLBACK",
+    "SCHEMA",
+    "SECTION",
+    "SELECT",
+    "SET",
+    "SMALLINT",
+    "SOME",
+    "SQL",
+    "SQLCODE",
+    "SQLERROR",
+    "SUM",
+    "TABLE",
+    "TO",
+    "UNION",
+    "UNIQUE",
+    "UPDATE",
+    "USER",
+    "VALUES",
+    "VIEW",
+    "WHENEVER",
+    "WHERE",
+    "WITH",
+    "WORK"
+};
+
+//------------------------------------------------------------------------------
+// SQL data structs
+//------------------------------------------------------------------------------
+struct column
+{
+    char name[MAX_IDENTIFIER_LENGTH + 1U];
+    int type;
+    uintptr_t offset;
+    size_t size;
+};
+
+struct table
+{
+    char name[MAX_IDENTIFIER_LENGTH + 1U];
+    size_t num_columns;
+    struct column* columns;
+    size_t row_pitch;
+    size_t num_rows;
+    void* rows;
+};
+
+static size_t num_tables = 0U;
+static struct table* tables = NULL;
+
+//------------------------------------------------------------------------------
+// SQL query parser
+//------------------------------------------------------------------------------
+#define INT_AS_STRING_LENGTH 12U
+
+static int
+parse_keyword(const char* token)
+{
+    if (NULL == token) return -1;
+    unsigned int i;
+    for (i = 0U; i < NUM_KEYWORDS; ++i)
+    {
+        if (0 == strcmp(token, key_words[i])) return i;
+    }
+    return -1;
+}
+
+static struct table*
+get_table_by_name(const char* name)
+{
+    size_t i;
+    for (i = 0U; i < num_tables; ++i)
+    {
+        if (0 == strcmp(tables[i].name, name)) return &tables[i];
+    }
+    return NULL;
 }
 
 //------------------------------------------------------------------------------
@@ -103,7 +402,7 @@ static struct client_connection connections[MAX_CONNECTIONS];
 static SOCKET listen_socket = INVALID_SOCKET, connect_socket = INVALID_SOCKET;
 static HANDLE listen_socket_thread = NULL, client_connection_lock = NULL;
 
-//------------------------------------------------------------------------------
+//------------------------- shutdown client connection -------------------------
 static void
 invalidate_connection(size_t client_index)
 {
@@ -115,8 +414,7 @@ invalidate_connection(size_t client_index)
     ReleaseMutex(client_connection_lock);
 }
 
-//------------------------------------------------------------------------------
-// client thread
+//---------------------------- client thread -----------------------------------
 static DWORD WINAPI
 client_socket_thread_proc(_In_ LPVOID lpParameter)
 {
@@ -165,8 +463,7 @@ client_socket_thread_proc(_In_ LPVOID lpParameter)
     return CHRISSLY_SQL_OK;
 }
 
-//------------------------------------------------------------------------------
-// listen thread
+//----------------------------- listen thread ----------------------------------
 static DWORD WINAPI
 listen_socket_thread_proc(_In_ LPVOID lp_parameter)
 {
@@ -222,6 +519,8 @@ listen_socket_thread_proc(_In_ LPVOID lp_parameter)
 chrissly_sql_error
 chrissly_sql_server_open(void)
 {
+    num_tables = 0U;
+    tables = NULL;
     memset(query_results, 0, DEFAULT_BUFLEN * MAX_CONNECTIONS);
 
 #ifdef CHRISSLY_SQL_WINDOWS
@@ -309,6 +608,20 @@ chrissly_sql_server_close(void)
 {
     chrissly_sql_error retval = CHRISSLY_SQL_OK;
 
+    // free all resources
+    if (tables != NULL)
+    {
+        size_t t;
+        for (t = 0U; t < num_tables; ++t)
+        {
+            free(tables[t].columns);
+            free(tables[t].rows);
+        }
+        free(tables);
+        num_tables = 0U;
+        tables = NULL;
+    }
+
 #ifdef CHRISSLY_SQL_WINDOWS
     // terminate listen socket thread and socket api
     closesocket(listen_socket);
@@ -349,15 +662,165 @@ chrissly_sql_server_close(void)
 
 //------------------------------------------------------------------------------
 /**
+    ToDo:
+      - replace strtok() with proper lexer, see chapter "5.3 <token>", for now
+      every delimiter needs a leading and a trailing separator (space or tab)
+      - check if tablename is upper case
+      - check if table already exists
+      - check if literal is really a number when inserting
 */
 chrissly_sql_error
 chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, void* user_data)
 {
+    char* result_columns[16U] = {'\0'};
+    char* result_values[16U] = {'\0'};
+    size_t result_count = 0U;
+
+    struct table* new_table = NULL;
+    unsigned int column_offset = 0U;
+
+    char str[DEFAULT_BUFLEN] = {'\0'};
+    (void)strcpy_s(str, DEFAULT_BUFLEN, query);
+    char* context = str;
+    char* token = strtok_s(str, SEPARATORS, &context);
+    while (token != NULL)
+    {
+        if (KW_CREATE == parse_keyword(token))
+        {
+            token = strtok_s(NULL, SEPARATORS, &context);
+            if (KW_TABLE == parse_keyword(token))
+            {
+                // create table
+                token = strtok_s(NULL, SEPARATORS, &context);
+                ++num_tables;
+                struct table* table_alloc = realloc(tables, num_tables * sizeof(struct table));
+                if (NULL == table_alloc) return CHRISSLY_SQL_ERR;
+                tables = table_alloc;
+                new_table = &tables[num_tables - 1U];
+                memset(new_table, 0, sizeof(struct table));
+                strncpy_s(new_table->name, MAX_IDENTIFIER_LENGTH + 1U, token, MAX_IDENTIFIER_LENGTH + 1U);
+                column_offset = 0U;
+                token = strtok_s(NULL, SEPARATORS, &context);
+                if (0 == strcmp(token, "("))
+                {
+                    token = strtok_s(NULL, SEPARATORS, &context);
+                    while (token != NULL && 0 != strcmp(token, ")"))
+                    {
+                        // create column
+                        if (0 == strcmp(token, ",")) token = strtok_s(NULL, SEPARATORS, &context);
+                        char* column_name = token;
+                        ++new_table->num_columns;
+                        struct column* column_alloc = realloc(new_table->columns, new_table->num_columns * sizeof(struct column));
+                        if (NULL == column_alloc) return CHRISSLY_SQL_ERR;
+                        new_table->columns = column_alloc;
+                        struct column* new_column = &new_table->columns[new_table->num_columns - 1U];
+                        strncpy_s(new_column->name, MAX_IDENTIFIER_LENGTH + 1U, column_name, MAX_IDENTIFIER_LENGTH + 1U);
+                        new_column->offset = column_offset;
+                        token = strtok_s(NULL, SEPARATORS, &context);
+                        switch (parse_keyword(token))
+                        {
+                            case KW_CHARACTER:
+                            case KW_CHAR:
+                                break;
+                            case KW_NUMERIC:
+                            case KW_DECIMAL:
+                            case KW_DEC:
+                                break;
+                            case KW_INTEGER:
+                            case KW_INT:
+                                new_column->type = DT_INTEGER;
+                                new_column->size = INT_AS_STRING_LENGTH;
+                                column_offset += INT_AS_STRING_LENGTH;
+                                new_table->row_pitch = column_offset;
+                                break;
+                            case KW_SMALLINT:
+                                break;
+                            case KW_FLOAT:
+                                break;
+                            case KW_REAL:
+                                break;
+                            case KW_DOUBLE:
+                                break;
+                            default:
+                                break;
+                        }
+                        result_columns[result_count] = column_name;
+                        result_values[result_count] = "";
+                        ++result_count;
+                        token = strtok_s(NULL, SEPARATORS, &context);
+                    }
+                    token = strtok_s(NULL, SEPARATORS, &context);
+                }
+            }
+        }
+        else if (KW_INSERT == parse_keyword(token))
+        {
+            token = strtok_s(NULL, SEPARATORS, &context);
+            if (KW_INTO == parse_keyword(token))
+            {
+                // insert into table
+                token = strtok_s(NULL, SEPARATORS, &context);
+                struct table* t = get_table_by_name(token);
+                if (NULL == t) return CHRISSLY_SQL_ERR;
+
+                token = strtok_s(NULL, SEPARATORS, &context);
+                if (KW_VALUES == parse_keyword(token))
+                {
+                    token = strtok_s(NULL, SEPARATORS, &context);
+                    if (0 == strcmp(token, "("))
+                    {
+                        ++t->num_rows;
+                        void* row_alloc = realloc(t->rows, t->num_rows * t->row_pitch);
+                        if (NULL == row_alloc) return CHRISSLY_SQL_ERR;
+                        t->rows = row_alloc;
+                        char* row = (char*)((uintptr_t)t->rows + (uintptr_t)(t->row_pitch * (t->num_rows - 1U)));
+                        size_t c;
+                        for (c = 0U; c < t->num_columns; ++c)
+                        {
+                            token = strtok_s(NULL, SEPARATORS, &context);
+                            if (0 == strcmp(token, ",")) token = strtok_s(NULL, SEPARATORS, &context);
+                            strncpy_s(row + t->columns[c].offset, t->columns[c].size, token, t->columns[c].size);
+                            result_columns[c] = t->columns[c].name;
+                            result_values[c] = row + t->columns[c].offset;
+                        }
+                        result_count = t->num_columns;
+                    }
+                }
+            }
+        }
+        else if (KW_SELECT == parse_keyword(token))
+        {
+            token = strtok_s(NULL, SEPARATORS, &context);
+            if (0 == strcmp(token, "*"))
+            {
+                token = strtok_s(NULL, SEPARATORS, &context);
+                if (KW_FROM == parse_keyword(token))
+                {
+                    // select all from table
+                    token = strtok_s(NULL, SEPARATORS, &context);
+                    struct table* t = get_table_by_name(token);
+                    if (NULL == t) return CHRISSLY_SQL_ERR;
+                    char* row = (char*)((uintptr_t)t->rows + (uintptr_t)(t->row_pitch * (t->num_rows - 1U)));
+                    size_t r;
+                    for (r = 0U; r < t->num_rows; ++r)
+                    {
+                        size_t c;
+                        for (c = 0U; c < t->num_columns; ++c)
+                        {
+                            result_columns[c] = t->columns[c].name;
+                            result_values[c] = row + t->columns[c].offset;
+                        }
+                    }
+                    result_count = t->num_columns;
+                }
+            }
+        }
+        token = strtok_s(NULL, SEPARATORS, &context);
+    }
+
     if (cb != NULL)
     {
-        char* columns[1U] = {"DUMMY_COLUMN"};
-        char* values[1U] = {(char*)query};
-        cb(1U, columns, values, user_data);
+        cb(result_count, result_columns, result_values, user_data);
     }
 
     return CHRISSLY_SQL_OK;
@@ -491,8 +954,8 @@ chrissly_sql_client_query(char const* query, chrissly_sql_query_callback cb, voi
         recv_buf[error < DEFAULT_BUFLEN ? error : DEFAULT_BUFLEN - 1U] = '\0';
         if (cb != NULL)
         {
-            char* columns[1U] = {"DUMMY_COLUMN"};
-            char* values[1U] = {recv_buf};
+            char* columns[1U] = {recv_buf};
+            char* values[1U] = {""};
             cb(1U, columns, values, user_data);
         }
     }
