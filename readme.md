@@ -52,6 +52,7 @@ main()
     chrissly_sql_client_connect("localhost");
     chrissly_sql_client_query("CREATE TABLE A_TABLE_NAME ( A_COLUMN_NAME INTEGER , SECOND_COLUMN INT , THIRD_COLUMN INT ) ;", query_result_callback, NULL);
     chrissly_sql_client_query("INSERT INTO A_TABLE_NAME VALUES ( 123 , 456 , 789) ;", query_result_callback, NULL);
+    chrissly_sql_client_query("SELECT * FROM A_TABLE_NAME ;", query_result_callback, NULL);
     (void)_getch();
     chrissly_sql_client_disconnect();
 }

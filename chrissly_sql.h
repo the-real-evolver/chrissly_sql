@@ -13,6 +13,15 @@
         #define CHRISSLY_SQL_IMPLEMENTATION
     before you include this file in *one* C or C++ file to create the implementation.
 
+    Implementation details
+    ======================
+
+    Three allocations for every table:
+
+      - one realloc for the table header when a new table is added to the tables array
+      - one realloc when a new column is added to the column array of the table
+      - one realloc when a new row is added to the table
+
     (C) 2024 Christian Bleicher
 */
 //------------------------------------------------------------------------------
@@ -36,6 +45,7 @@ chrissly_sql_error chrissly_sql_server_close(void);
 chrissly_sql_error chrissly_sql_server_create_db(char const* file_name);
 chrissly_sql_error chrissly_sql_server_load_db(char const* file_name);
 chrissly_sql_error chrissly_sql_server_save_db(void);
+// executes query and waits for the result
 chrissly_sql_error chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, void* user_data);
 
 // connects client to the sql server at the given ip-address/hostname
@@ -57,10 +67,11 @@ chrissly_sql_error chrissly_sql_client_query(char const* query, chrissly_sql_que
 //------------------------------------------------------------------------------
 // General platform agnostic stuff
 //------------------------------------------------------------------------------
+#include <stdlib.h>
+#include <stdint.h>
 #include <stdarg.h>
 #include <string.h>
 #include <malloc.h>
-#include <stdint.h>
 
 #ifndef CHRISSLY_SQL_LOG
 static void
@@ -355,7 +366,7 @@ static struct table* tables = NULL;
 //------------------------------------------------------------------------------
 // SQL query parser
 //------------------------------------------------------------------------------
-#define INT_AS_STRING_LENGTH 12U
+#define NUMERIC_STORAGE_BUFFER_SIZE 16U
 
 static int
 parse_keyword(const char* token)
@@ -675,9 +686,11 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
     char* result_columns[16U] = {'\0'};
     char* result_values[16U] = {'\0'};
     size_t result_count = 0U;
+    char result_numeric_storage[NUMERIC_STORAGE_BUFFER_SIZE][NUMERIC_STORAGE_BUFFER_SIZE] = {{'\0'}};
+    size_t result_numeric_storage_count = 0U;
 
     struct table* new_table = NULL;
-    unsigned int column_offset = 0U;
+    size_t column_offset = 0U;
 
     char str[DEFAULT_BUFLEN] = {'\0'};
     (void)strcpy_s(str, DEFAULT_BUFLEN, query);
@@ -729,8 +742,8 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
                             case KW_INTEGER:
                             case KW_INT:
                                 new_column->type = DT_INTEGER;
-                                new_column->size = INT_AS_STRING_LENGTH;
-                                column_offset += INT_AS_STRING_LENGTH;
+                                new_column->size = sizeof(int32_t);
+                                column_offset += new_column->size;
                                 new_table->row_pitch = column_offset;
                                 break;
                             case KW_SMALLINT:
@@ -752,6 +765,7 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
                     token = strtok_s(NULL, SEPARATORS, &context);
                 }
             }
+            if (cb != NULL) cb(result_count, result_columns, result_values, user_data);
         }
         else if (KW_INSERT == parse_keyword(token))
         {
@@ -779,14 +793,28 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
                         {
                             token = strtok_s(NULL, SEPARATORS, &context);
                             if (0 == strcmp(token, ",")) token = strtok_s(NULL, SEPARATORS, &context);
-                            strncpy_s(row + t->columns[c].offset, t->columns[c].size, token, t->columns[c].size);
+                            switch (t->columns[c].type)
+                            {
+                                case DT_INTEGER:
+                                    {
+                                        int32_t number = atoi(token);
+                                        memcpy(row + t->columns[c].offset, &number, t->columns[c].size);
+                                        strcpy_s(result_numeric_storage[result_numeric_storage_count], NUMERIC_STORAGE_BUFFER_SIZE, token);
+                                        result_values[c] = result_numeric_storage[result_numeric_storage_count];
+                                        ++result_numeric_storage_count;
+                                    }
+                                    break;
+                                default:
+                                    break;
+                            }
                             result_columns[c] = t->columns[c].name;
-                            result_values[c] = row + t->columns[c].offset;
                         }
                         result_count = t->num_columns;
                     }
                 }
             }
+            if (cb != NULL) cb(result_count, result_columns, result_values, user_data);
+            result_numeric_storage_count = 0U;
         }
         else if (KW_SELECT == parse_keyword(token))
         {
@@ -800,27 +828,38 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
                     token = strtok_s(NULL, SEPARATORS, &context);
                     struct table* t = get_table_by_name(token);
                     if (NULL == t) return CHRISSLY_SQL_ERR;
-                    char* row = (char*)((uintptr_t)t->rows + (uintptr_t)(t->row_pitch * (t->num_rows - 1U)));
+                    char* row = (char*)t->rows;
+                    result_count = t->num_columns;
                     size_t r;
                     for (r = 0U; r < t->num_rows; ++r)
                     {
                         size_t c;
                         for (c = 0U; c < t->num_columns; ++c)
                         {
+                            switch (t->columns[c].type)
+                            {
+                                case DT_INTEGER:
+                                    {
+                                        int32_t number = 0U;
+                                        memcpy(&number, row + t->columns[c].offset, t->columns[c].size);
+                                        sprintf_s(result_numeric_storage[result_numeric_storage_count], NUMERIC_STORAGE_BUFFER_SIZE, "%i", number);
+                                        result_values[c] = result_numeric_storage[result_numeric_storage_count];
+                                        ++result_numeric_storage_count;
+                                    }
+                                    break;
+                                default:
+                                    break;
+                            }
                             result_columns[c] = t->columns[c].name;
-                            result_values[c] = row + t->columns[c].offset;
                         }
+                        if (cb != NULL) cb(result_count, result_columns, result_values, user_data);
+                        row += t->row_pitch;
                     }
-                    result_count = t->num_columns;
                 }
             }
+            result_numeric_storage_count = 0U;
         }
         token = strtok_s(NULL, SEPARATORS, &context);
-    }
-
-    if (cb != NULL)
-    {
-        cb(result_count, result_columns, result_values, user_data);
     }
 
     return CHRISSLY_SQL_OK;
