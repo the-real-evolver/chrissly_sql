@@ -57,6 +57,6 @@ main()
     chrissly_sql_client_disconnect();
 }
 ```
-### Status
+## Status
 - network implementation on windows done (multiple clients can connect to the server)
 - creating tables (with columns of type integer), inserting values and selecting all from a table works

@@ -674,6 +674,7 @@ chrissly_sql_server_close(void)
 //------------------------------------------------------------------------------
 /**
     ToDo:
+      - add mutex for query
       - replace strtok() with proper lexer, see chapter "5.3 <token>", for now
       every delimiter needs a leading and a trailing separator (space or tab)
       - check if tablename is upper case
@@ -686,7 +687,7 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
     char* result_columns[16U] = {'\0'};
     char* result_values[16U] = {'\0'};
     size_t result_count = 0U;
-    char result_numeric_storage[NUMERIC_STORAGE_BUFFER_SIZE][NUMERIC_STORAGE_BUFFER_SIZE] = {{'\0'}};
+    char result_numeric_storage[16U][NUMERIC_STORAGE_BUFFER_SIZE] = {{'\0'}};
     size_t result_numeric_storage_count = 0U;
 
     struct table* new_table = NULL;
@@ -704,64 +705,62 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
             if (KW_TABLE == parse_keyword(token))
             {
                 // create table
+                char* table_name = strtok_s(NULL, SEPARATORS, &context);
                 token = strtok_s(NULL, SEPARATORS, &context);
+                if (0 != strcmp(token, "(")) return CHRISSLY_SQL_ERR;
+
                 ++num_tables;
                 struct table* table_alloc = realloc(tables, num_tables * sizeof(struct table));
                 if (NULL == table_alloc) return CHRISSLY_SQL_ERR;
                 tables = table_alloc;
                 new_table = &tables[num_tables - 1U];
                 memset(new_table, 0, sizeof(struct table));
-                strncpy_s(new_table->name, MAX_IDENTIFIER_LENGTH + 1U, token, MAX_IDENTIFIER_LENGTH + 1U);
+                strncpy_s(new_table->name, MAX_IDENTIFIER_LENGTH + 1U, table_name, MAX_IDENTIFIER_LENGTH + 1U);
                 column_offset = 0U;
                 token = strtok_s(NULL, SEPARATORS, &context);
-                if (0 == strcmp(token, "("))
+                while (token != NULL && 0 != strcmp(token, ")"))
                 {
+                    // create column
+                    if (0 == strcmp(token, ",")) token = strtok_s(NULL, SEPARATORS, &context);
+                    char* column_name = token;
+                    ++new_table->num_columns;
+                    struct column* column_alloc = realloc(new_table->columns, new_table->num_columns * sizeof(struct column));
+                    if (NULL == column_alloc) return CHRISSLY_SQL_ERR;
+                    new_table->columns = column_alloc;
+                    struct column* new_column = &new_table->columns[new_table->num_columns - 1U];
+                    strncpy_s(new_column->name, MAX_IDENTIFIER_LENGTH + 1U, column_name, MAX_IDENTIFIER_LENGTH + 1U);
+                    new_column->offset = column_offset;
                     token = strtok_s(NULL, SEPARATORS, &context);
-                    while (token != NULL && 0 != strcmp(token, ")"))
+                    switch (parse_keyword(token))
                     {
-                        // create column
-                        if (0 == strcmp(token, ",")) token = strtok_s(NULL, SEPARATORS, &context);
-                        char* column_name = token;
-                        ++new_table->num_columns;
-                        struct column* column_alloc = realloc(new_table->columns, new_table->num_columns * sizeof(struct column));
-                        if (NULL == column_alloc) return CHRISSLY_SQL_ERR;
-                        new_table->columns = column_alloc;
-                        struct column* new_column = &new_table->columns[new_table->num_columns - 1U];
-                        strncpy_s(new_column->name, MAX_IDENTIFIER_LENGTH + 1U, column_name, MAX_IDENTIFIER_LENGTH + 1U);
-                        new_column->offset = column_offset;
-                        token = strtok_s(NULL, SEPARATORS, &context);
-                        switch (parse_keyword(token))
-                        {
-                            case KW_CHARACTER:
-                            case KW_CHAR:
-                                break;
-                            case KW_NUMERIC:
-                            case KW_DECIMAL:
-                            case KW_DEC:
-                                break;
-                            case KW_INTEGER:
-                            case KW_INT:
-                                new_column->type = DT_INTEGER;
-                                new_column->size = sizeof(int32_t);
-                                column_offset += new_column->size;
-                                new_table->row_pitch = column_offset;
-                                break;
-                            case KW_SMALLINT:
-                                break;
-                            case KW_FLOAT:
-                                break;
-                            case KW_REAL:
-                                break;
-                            case KW_DOUBLE:
-                                break;
-                            default:
-                                break;
-                        }
-                        result_columns[result_count] = column_name;
-                        result_values[result_count] = "";
-                        ++result_count;
-                        token = strtok_s(NULL, SEPARATORS, &context);
+                        case KW_CHARACTER:
+                        case KW_CHAR:
+                            break;
+                        case KW_NUMERIC:
+                        case KW_DECIMAL:
+                        case KW_DEC:
+                            break;
+                        case KW_INTEGER:
+                        case KW_INT:
+                            new_column->type = DT_INTEGER;
+                            new_column->size = sizeof(int32_t);
+                            column_offset += new_column->size;
+                            new_table->row_pitch = column_offset;
+                            break;
+                        case KW_SMALLINT:
+                            break;
+                        case KW_FLOAT:
+                            break;
+                        case KW_REAL:
+                            break;
+                        case KW_DOUBLE:
+                            break;
+                        default:
+                            break;
                     }
+                    result_columns[result_count] = column_name;
+                    result_values[result_count] = "";
+                    ++result_count;
                     token = strtok_s(NULL, SEPARATORS, &context);
                 }
             }
@@ -770,49 +769,47 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
         else if (KW_INSERT == parse_keyword(token))
         {
             token = strtok_s(NULL, SEPARATORS, &context);
-            if (KW_INTO == parse_keyword(token))
-            {
-                // insert into table
-                token = strtok_s(NULL, SEPARATORS, &context);
-                struct table* t = get_table_by_name(token);
-                if (NULL == t) return CHRISSLY_SQL_ERR;
+            if (KW_INTO != parse_keyword(token)) return CHRISSLY_SQL_ERR;
 
+            // insert into table
+            token = strtok_s(NULL, SEPARATORS, &context);
+            struct table* t = get_table_by_name(token);
+            if (NULL == t) return CHRISSLY_SQL_ERR;
+
+            token = strtok_s(NULL, SEPARATORS, &context);
+            if (KW_VALUES != parse_keyword(token)) return CHRISSLY_SQL_ERR;
+
+            token = strtok_s(NULL, SEPARATORS, &context);
+            if (0 != strcmp(token, "(")) return CHRISSLY_SQL_ERR;
+
+            ++t->num_rows;
+            void* row_alloc = realloc(t->rows, t->num_rows * t->row_pitch);
+            if (NULL == row_alloc) return CHRISSLY_SQL_ERR;
+            t->rows = row_alloc;
+            char* row = (char*)((uintptr_t)t->rows + (uintptr_t)(t->row_pitch * (t->num_rows - 1U)));
+            size_t c;
+            for (c = 0U; c < t->num_columns; ++c)
+            {
                 token = strtok_s(NULL, SEPARATORS, &context);
-                if (KW_VALUES == parse_keyword(token))
+                if (0 == strcmp(token, ",")) token = strtok_s(NULL, SEPARATORS, &context);
+                switch (t->columns[c].type)
                 {
-                    token = strtok_s(NULL, SEPARATORS, &context);
-                    if (0 == strcmp(token, "("))
-                    {
-                        ++t->num_rows;
-                        void* row_alloc = realloc(t->rows, t->num_rows * t->row_pitch);
-                        if (NULL == row_alloc) return CHRISSLY_SQL_ERR;
-                        t->rows = row_alloc;
-                        char* row = (char*)((uintptr_t)t->rows + (uintptr_t)(t->row_pitch * (t->num_rows - 1U)));
-                        size_t c;
-                        for (c = 0U; c < t->num_columns; ++c)
+                    case DT_INTEGER:
                         {
-                            token = strtok_s(NULL, SEPARATORS, &context);
-                            if (0 == strcmp(token, ",")) token = strtok_s(NULL, SEPARATORS, &context);
-                            switch (t->columns[c].type)
-                            {
-                                case DT_INTEGER:
-                                    {
-                                        int32_t number = atoi(token);
-                                        memcpy(row + t->columns[c].offset, &number, t->columns[c].size);
-                                        strcpy_s(result_numeric_storage[result_numeric_storage_count], NUMERIC_STORAGE_BUFFER_SIZE, token);
-                                        result_values[c] = result_numeric_storage[result_numeric_storage_count];
-                                        ++result_numeric_storage_count;
-                                    }
-                                    break;
-                                default:
-                                    break;
-                            }
-                            result_columns[c] = t->columns[c].name;
+                            int32_t number = atoi(token);
+                            memcpy(row + t->columns[c].offset, &number, t->columns[c].size);
+                            strcpy_s(result_numeric_storage[result_numeric_storage_count], NUMERIC_STORAGE_BUFFER_SIZE, token);
+                            result_values[c] = result_numeric_storage[result_numeric_storage_count];
+                            ++result_numeric_storage_count;
                         }
-                        result_count = t->num_columns;
-                    }
+                        break;
+                    default:
+                        break;
                 }
+                result_columns[c] = t->columns[c].name;
             }
+            result_count = t->num_columns;
+
             if (cb != NULL) cb(result_count, result_columns, result_values, user_data);
             result_numeric_storage_count = 0U;
         }
@@ -822,39 +819,38 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
             if (0 == strcmp(token, "*"))
             {
                 token = strtok_s(NULL, SEPARATORS, &context);
-                if (KW_FROM == parse_keyword(token))
+                if (KW_FROM != parse_keyword(token)) return CHRISSLY_SQL_ERR;
+
+                // select all from table
+                token = strtok_s(NULL, SEPARATORS, &context);
+                struct table* t = get_table_by_name(token);
+                if (NULL == t) return CHRISSLY_SQL_ERR;
+                char* row = (char*)t->rows;
+                result_count = t->num_columns;
+                size_t r;
+                for (r = 0U; r < t->num_rows; ++r)
                 {
-                    // select all from table
-                    token = strtok_s(NULL, SEPARATORS, &context);
-                    struct table* t = get_table_by_name(token);
-                    if (NULL == t) return CHRISSLY_SQL_ERR;
-                    char* row = (char*)t->rows;
-                    result_count = t->num_columns;
-                    size_t r;
-                    for (r = 0U; r < t->num_rows; ++r)
+                    size_t c;
+                    for (c = 0U; c < t->num_columns; ++c)
                     {
-                        size_t c;
-                        for (c = 0U; c < t->num_columns; ++c)
+                        switch (t->columns[c].type)
                         {
-                            switch (t->columns[c].type)
-                            {
-                                case DT_INTEGER:
-                                    {
-                                        int32_t number = 0U;
-                                        memcpy(&number, row + t->columns[c].offset, t->columns[c].size);
-                                        sprintf_s(result_numeric_storage[result_numeric_storage_count], NUMERIC_STORAGE_BUFFER_SIZE, "%i", number);
-                                        result_values[c] = result_numeric_storage[result_numeric_storage_count];
-                                        ++result_numeric_storage_count;
-                                    }
-                                    break;
-                                default:
-                                    break;
-                            }
-                            result_columns[c] = t->columns[c].name;
+                            case DT_INTEGER:
+                                {
+                                    int32_t number = 0U;
+                                    memcpy(&number, row + t->columns[c].offset, t->columns[c].size);
+                                    sprintf_s(result_numeric_storage[result_numeric_storage_count], NUMERIC_STORAGE_BUFFER_SIZE, "%i", number);
+                                    result_values[c] = result_numeric_storage[result_numeric_storage_count];
+                                    ++result_numeric_storage_count;
+                                }
+                                break;
+                            default:
+                                break;
                         }
-                        if (cb != NULL) cb(result_count, result_columns, result_values, user_data);
-                        row += t->row_pitch;
+                        result_columns[c] = t->columns[c].name;
                     }
+                    if (cb != NULL) cb(result_count, result_columns, result_values, user_data);
+                    row += t->row_pitch;
                 }
             }
             result_numeric_storage_count = 0U;
