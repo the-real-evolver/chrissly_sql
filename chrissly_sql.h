@@ -411,7 +411,7 @@ struct client_connection
 static struct client_connection connections[MAX_CONNECTIONS];
 
 static SOCKET listen_socket = INVALID_SOCKET, connect_socket = INVALID_SOCKET;
-static HANDLE listen_socket_thread = NULL, client_connection_lock = NULL;
+static HANDLE listen_socket_thread = NULL, client_connection_lock = NULL, server_query_lock = NULL;
 
 //------------------------- shutdown client connection -------------------------
 static void
@@ -606,6 +606,8 @@ chrissly_sql_server_open(void)
 
     // create a thread that listens to incoming connections
     listen_socket_thread = CreateThread(NULL, 0U, listen_socket_thread_proc, NULL, 0U, NULL);
+
+    server_query_lock = CreateMutex(NULL, FALSE, NULL);
 #endif
 
     return CHRISSLY_SQL_OK;
@@ -666,6 +668,9 @@ chrissly_sql_server_close(void)
     WSACleanup();
     CloseHandle(client_connection_lock);
     client_connection_lock = NULL;
+
+    CloseHandle(server_query_lock);
+    server_query_lock = NULL;
 #endif
 
     return retval;
@@ -674,28 +679,28 @@ chrissly_sql_server_close(void)
 //------------------------------------------------------------------------------
 /**
     ToDo:
-      - add mutex for query
       - replace strtok() with proper lexer, see chapter "5.3 <token>", for now
       every delimiter needs a leading and a trailing separator (space or tab)
       - check if tablename is upper case
       - check if table already exists
-      - check if literal is really a number when inserting
 */
 chrissly_sql_error
 chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, void* user_data)
 {
+#ifdef CHRISSLY_SQL_WINDOWS
+    WaitForSingleObject(server_query_lock, INFINITE);
+#endif
     char* result_columns[16U] = {'\0'};
     char* result_values[16U] = {'\0'};
-    size_t result_count = 0U;
+    size_t result_count = 0U, result_numeric_storage_count = 0U;
     char result_numeric_storage[16U][NUMERIC_STORAGE_BUFFER_SIZE] = {{'\0'}};
-    size_t result_numeric_storage_count = 0U;
 
     struct table* new_table = NULL;
     size_t column_offset = 0U;
 
     char str[DEFAULT_BUFLEN] = {'\0'};
     (void)strcpy_s(str, DEFAULT_BUFLEN, query);
-    char* context = str;
+    char* context = NULL;
     char* token = strtok_s(str, SEPARATORS, &context);
     while (token != NULL)
     {
@@ -733,13 +738,6 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
                     token = strtok_s(NULL, SEPARATORS, &context);
                     switch (parse_keyword(token))
                     {
-                        case KW_CHARACTER:
-                        case KW_CHAR:
-                            break;
-                        case KW_NUMERIC:
-                        case KW_DECIMAL:
-                        case KW_DEC:
-                            break;
                         case KW_INTEGER:
                         case KW_INT:
                             new_column->type = DT_INTEGER;
@@ -747,15 +745,9 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
                             column_offset += new_column->size;
                             new_table->row_pitch = column_offset;
                             break;
-                        case KW_SMALLINT:
-                            break;
-                        case KW_FLOAT:
-                            break;
-                        case KW_REAL:
-                            break;
-                        case KW_DOUBLE:
-                            break;
                         default:
+                            new_column->type = -1;
+                            new_column->size = 0U;
                             break;
                     }
                     result_columns[result_count] = column_name;
@@ -857,7 +849,9 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
         }
         token = strtok_s(NULL, SEPARATORS, &context);
     }
-
+#ifdef CHRISSLY_SQL_WINDOWS
+    ReleaseMutex(server_query_lock);
+#endif
     return CHRISSLY_SQL_OK;
 }
 
