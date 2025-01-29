@@ -621,20 +621,6 @@ chrissly_sql_server_close(void)
 {
     chrissly_sql_error retval = CHRISSLY_SQL_OK;
 
-    // free all resources
-    if (tables != NULL)
-    {
-        size_t t;
-        for (t = 0U; t < num_tables; ++t)
-        {
-            free(tables[t].columns);
-            free(tables[t].rows);
-        }
-        free(tables);
-        num_tables = 0U;
-        tables = NULL;
-    }
-
 #ifdef CHRISSLY_SQL_WINDOWS
     // terminate listen socket thread and socket api
     closesocket(listen_socket);
@@ -672,6 +658,20 @@ chrissly_sql_server_close(void)
     CloseHandle(server_query_lock);
     server_query_lock = NULL;
 #endif
+
+    // free all resources
+    if (tables != NULL)
+    {
+        size_t t;
+        for (t = 0U; t < num_tables; ++t)
+        {
+            free(tables[t].columns);
+            free(tables[t].rows);
+        }
+        free(tables);
+        num_tables = 0U;
+        tables = NULL;
+    }
 
     return retval;
 }
