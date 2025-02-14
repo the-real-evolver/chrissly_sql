@@ -36,7 +36,7 @@ enum chrissly_sql_error_code
 };
 typedef unsigned int chrissly_sql_error;
 
-typedef void(*chrissly_sql_query_callback)(size_t, char**, char**, void*);
+typedef void(*chrissly_sql_query_callback)(size_t, char**, size_t, char**, void*);
 
 // initialise server and listen for client connections
 chrissly_sql_error chrissly_sql_server_open(void);
@@ -95,10 +95,11 @@ chrissly_sql_log(const char* const msg, ...)
 static char query_results[MAX_CONNECTIONS][DEFAULT_BUFLEN];
 
 static void
-server_query_result_callback(size_t count, char** columns, char** values, void* user_data)
+server_query_result_callback(size_t column_count, char** columns, size_t row_count, char** values, void* user_data)
 {
     CHRISSLY_SQL_UNREFERENCED_PARAMETER(values);
-    CHRISSLY_SQL_UNREFERENCED_PARAMETER(count);
+    CHRISSLY_SQL_UNREFERENCED_PARAMETER(column_count);
+    CHRISSLY_SQL_UNREFERENCED_PARAMETER(row_count);
     (void)strcpy_s(query_results[(uintptr_t)user_data], DEFAULT_BUFLEN, columns[0U]);
 }
 
@@ -692,7 +693,7 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
 #endif
     char* result_columns[16U] = {'\0'};
     char* result_values[16U] = {'\0'};
-    size_t result_count = 0U, result_numeric_storage_count = 0U;
+    size_t result_column_count = 0U, result_numeric_storage_count = 0U;
     char result_numeric_storage[16U][NUMERIC_STORAGE_BUFFER_SIZE] = {{'\0'}};
 
     struct table* new_table = NULL;
@@ -750,13 +751,12 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
                             new_column->size = 0U;
                             break;
                     }
-                    result_columns[result_count] = column_name;
-                    result_values[result_count] = "";
-                    ++result_count;
+                    result_columns[result_column_count] = column_name;
+                    ++result_column_count;
                     token = strtok_s(NULL, SEPARATORS, &context);
                 }
             }
-            if (cb != NULL) cb(result_count, result_columns, result_values, user_data);
+            if (cb != NULL) cb(result_column_count, result_columns, 0U, NULL, user_data);
         }
         else if (KW_INSERT == parse_keyword(token))
         {
@@ -800,9 +800,7 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
                 }
                 result_columns[c] = t->columns[c].name;
             }
-            result_count = t->num_columns;
-
-            if (cb != NULL) cb(result_count, result_columns, result_values, user_data);
+            if (cb != NULL) cb(t->num_columns, result_columns, 1U, result_values, user_data);
             result_numeric_storage_count = 0U;
         }
         else if (KW_SELECT == parse_keyword(token))
@@ -818,7 +816,6 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
                 struct table* t = get_table_by_name(token);
                 if (NULL == t) return CHRISSLY_SQL_ERR;
                 char* row = (char*)t->rows;
-                result_count = t->num_columns;
                 size_t r;
                 for (r = 0U; r < t->num_rows; ++r)
                 {
@@ -832,7 +829,7 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
                                     int32_t number = 0U;
                                     memcpy(&number, row + t->columns[c].offset, t->columns[c].size);
                                     sprintf_s(result_numeric_storage[result_numeric_storage_count], NUMERIC_STORAGE_BUFFER_SIZE, "%i", number);
-                                    result_values[c] = result_numeric_storage[result_numeric_storage_count];
+                                    result_values[r * t->num_columns + c] = result_numeric_storage[result_numeric_storage_count];
                                     ++result_numeric_storage_count;
                                 }
                                 break;
@@ -841,9 +838,9 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
                         }
                         result_columns[c] = t->columns[c].name;
                     }
-                    if (cb != NULL) cb(result_count, result_columns, result_values, user_data);
                     row += t->row_pitch;
                 }
+                if (cb != NULL) cb(t->num_columns, result_columns, t->num_rows, result_values, user_data);
             }
             result_numeric_storage_count = 0U;
         }
@@ -984,8 +981,7 @@ chrissly_sql_client_query(char const* query, chrissly_sql_query_callback cb, voi
         if (cb != NULL)
         {
             char* columns[1U] = {recv_buf};
-            char* values[1U] = {""};
-            cb(1U, columns, values, user_data);
+            cb(1U, columns, 0U, NULL, user_data);
         }
     }
     else if (0 == error)

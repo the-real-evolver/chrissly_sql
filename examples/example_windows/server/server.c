@@ -12,18 +12,22 @@
 /**
 */
 static void
-query_result_callback(size_t count, char** columns, char** values, void* user_data)
+query_result_callback(size_t column_count, char** columns, size_t row_count, char** values, void* user_data)
 {
     CHRISSLY_SQL_UNREFERENCED_PARAMETER(user_data);
-    size_t i;
-    for (i = 0U; i < count; ++i)
+    size_t c, r;
+    for (c = 0U; c < column_count; ++c)
     {
-        printf("%-16s", columns[i]);
+        printf("%-16s", columns[c]);
     }
     printf("\n");
-    for (i = 0U; i < count; ++i)
+    for (r = 0U; r < row_count; ++r)
     {
-        printf("%-16s", values[i]);
+        for (c = 0U; c < column_count; ++c)
+        {
+            printf("%-16s", values[r * column_count + c]);
+        }
+        printf("\n");
     }
     printf("\n");
 }
