@@ -22,6 +22,14 @@
       - one realloc when a new column is added to the column array of the table
       - one realloc when a new row is added to the table
 
+    Query result network protocol:
+
+      - stream of null terminated strings
+        1. number of columns
+        2. column names
+        3. number of rows
+        4. rows
+
     (C) 2024 Christian Bleicher
 */
 //------------------------------------------------------------------------------
@@ -97,10 +105,20 @@ static char query_results[MAX_CONNECTIONS][DEFAULT_BUFLEN];
 static void
 server_query_result_callback(size_t column_count, char** columns, size_t row_count, char** values, void* user_data)
 {
-    CHRISSLY_SQL_UNREFERENCED_PARAMETER(values);
-    CHRISSLY_SQL_UNREFERENCED_PARAMETER(column_count);
-    CHRISSLY_SQL_UNREFERENCED_PARAMETER(row_count);
-    (void)strcpy_s(query_results[(uintptr_t)user_data], DEFAULT_BUFLEN, columns[0U]);
+    char* p = query_results[(uintptr_t)user_data]; char* s = p;
+    sprintf_s(p, DEFAULT_BUFLEN, "%llu", column_count); p += strlen(p) + 1U;
+    size_t i, len;
+    for (i = 0U; i < column_count; ++i)
+    {
+        len = strlen(columns[i]) + 1U;
+        strcpy_s(p, DEFAULT_BUFLEN - (p - s), columns[i]); p += len;
+    }
+    sprintf_s(p, DEFAULT_BUFLEN - (p - s), "%llu", row_count); p += strlen(p) + 1U;
+    for (i = 0U; i < column_count * row_count; ++i)
+    {
+        len = strlen(values[i]) + 1U;
+        strcpy_s(p, DEFAULT_BUFLEN - (p - s), values[i]); p += len;
+    }
 }
 
 //------------------------------------------------------------------------------
@@ -444,7 +462,7 @@ client_socket_thread_proc(_In_ LPVOID lpParameter)
             chrissly_sql_server_query(recv_buf, server_query_result_callback, (void*)client_index);
 
             // send query result back to the client
-            int send_result = send(connections[client_index].socket, query_results[client_index], error, 0);
+            int send_result = send(connections[client_index].socket, query_results[client_index], DEFAULT_BUFLEN, 0);
             if (SOCKET_ERROR == send_result)
             {
                 CHRISSLY_SQL_LOG("send() failed with error: %d\n", WSAGetLastError());
@@ -980,8 +998,20 @@ chrissly_sql_client_query(char const* query, chrissly_sql_query_callback cb, voi
         recv_buf[error < DEFAULT_BUFLEN ? error : DEFAULT_BUFLEN - 1U] = '\0';
         if (cb != NULL)
         {
-            char* columns[1U] = {recv_buf};
-            cb(1U, columns, 0U, NULL, user_data);
+            char* columns[16U] = {0};
+            char* p = recv_buf;
+            size_t i, column_count = atoi(p); p += strlen(p) + 1U;
+            for (i = 0U; i < column_count; ++i)
+            {
+                columns[i] = p; p += strlen(p) + 1U;
+            }
+            char* values[16U] = {0};
+            size_t row_count = atoi(p); p += strlen(p) + 1U;
+            for (i = 0U; i < row_count * column_count; ++i)
+            {
+                values[i] = p; p += strlen(p) + 1U;
+            }
+            cb(column_count, columns, row_count, values, user_data);
         }
     }
     else if (0 == error)
