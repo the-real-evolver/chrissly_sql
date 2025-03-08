@@ -11,13 +11,14 @@
 #include "chrissly_sql.h"
 
 int
-main()
+main(void)
 {
     printf("Hello ChrisslySQL-Server!\n");
     chrissly_sql_server_open();
     printf("Press any key to quit\n");
     (void)_getch();
     chrissly_sql_server_close();
+    return 0;
 }
 ```
 ### Client
@@ -50,7 +51,7 @@ query_result_callback(size_t column_count, char** columns, size_t row_count, cha
 }
 
 int
-main()
+main(void)
 {
     printf("Hello ChrisslySQL-Client!\n");
     chrissly_sql_client_connect("localhost");
@@ -59,6 +60,7 @@ main()
     chrissly_sql_client_query("SELECT * FROM A_TABLE_NAME ;", query_result_callback, NULL);
     (void)_getch();
     chrissly_sql_client_disconnect();
+    return 0;
 }
 ```
 ## Status

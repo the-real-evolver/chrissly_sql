@@ -107,17 +107,15 @@ server_query_result_callback(size_t column_count, char** columns, size_t row_cou
 {
     char* p = query_results[(uintptr_t)user_data]; char* s = p;
     sprintf_s(p, DEFAULT_BUFLEN, "%llu", column_count); p += strlen(p) + 1U;
-    size_t i, len;
+    size_t i;
     for (i = 0U; i < column_count; ++i)
     {
-        len = strlen(columns[i]) + 1U;
-        strcpy_s(p, DEFAULT_BUFLEN - (p - s), columns[i]); p += len;
+        strcpy_s(p, DEFAULT_BUFLEN - (p - s), columns[i]); p += strlen(columns[i]) + 1U;
     }
     sprintf_s(p, DEFAULT_BUFLEN - (p - s), "%llu", row_count); p += strlen(p) + 1U;
     for (i = 0U; i < column_count * row_count; ++i)
     {
-        len = strlen(values[i]) + 1U;
-        strcpy_s(p, DEFAULT_BUFLEN - (p - s), values[i]); p += len;
+        strcpy_s(p, DEFAULT_BUFLEN - (p - s), values[i]); p += strlen(values[i]) + 1U;
     }
 }
 

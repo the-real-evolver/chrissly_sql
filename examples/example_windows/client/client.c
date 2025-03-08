@@ -36,7 +36,7 @@ query_result_callback(size_t column_count, char** columns, size_t row_count, cha
 /**
 */
 int
-main()
+main(void)
 {
     printf("Hello ChrisslySQL-Client!\n");
     chrissly_sql_client_connect("localhost");
@@ -45,4 +45,5 @@ main()
     chrissly_sql_client_query("SELECT * FROM A_TABLE_NAME ;", query_result_callback, NULL);
     (void)_getch();
     chrissly_sql_client_disconnect();
+    return 0;
 }
