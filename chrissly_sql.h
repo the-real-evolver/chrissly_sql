@@ -159,201 +159,114 @@ enum data_type
 };
 
 // specify the key words (see chapter "5.3 <token>")
+#define KEY_WORD_LIST(m) \
+    m(ALL), \
+    m(AND), \
+    m(ANY), \
+    m(AS), \
+    m(ASC), \
+    m(AUTHORIZATION), \
+    m(AVG), \
+    m(BEGIN), \
+    m(BETWEEN), \
+    m(BY), \
+    m(CHAR), \
+    m(CHARACTER), \
+    m(CHECK), \
+    m(CLOSE), \
+    m(COBOL), \
+    m(COMMIT), \
+    m(CONTINUE), \
+    m(COUNT), \
+    m(CREATE), \
+    m(CURRENT), \
+    m(CURSOR), \
+    m(DEC), \
+    m(DECIMAL), \
+    m(DECLARE), \
+    m(DELETE), \
+    m(DESC), \
+    m(DISTINCT), \
+    m(DOUBLE), \
+    m(END), \
+    m(ESCAPE), \
+    m(EXEC), \
+    m(EXISTS), \
+    m(FETCH), \
+    m(FLOAT), \
+    m(FOR), \
+    m(FORTRAN), \
+    m(FOUND), \
+    m(FROM), \
+    m(GO), \
+    m(GOTO), \
+    m(GRANT), \
+    m(GROUP), \
+    m(HAVING), \
+    m(IN), \
+    m(INDICATOR), \
+    m(INSERT), \
+    m(INT), \
+    m(INTEGER), \
+    m(INTO), \
+    m(IS), \
+    m(LANGUAGE), \
+    m(LIKE), \
+    m(MAX), \
+    m(MIN), \
+    m(MODULE), \
+    m(NOT), \
+    m(NULL), \
+    m(NUMERIC), \
+    m(OF), \
+    m(ON), \
+    m(OPEN), \
+    m(OPTION), \
+    m(OR), \
+    m(ORDER), \
+    m(PASCAL), \
+    m(PLI), \
+    m(PRECISION), \
+    m(PRIVILEGES), \
+    m(PROCEDURE), \
+    m(PUBLIC), \
+    m(REAL), \
+    m(ROLLBACK), \
+    m(SCHEMA), \
+    m(SECTION), \
+    m(SELECT), \
+    m(SET), \
+    m(SMALLINT), \
+    m(SOME), \
+    m(SQL), \
+    m(SQLCODE), \
+    m(SQLERROR), \
+    m(SUM), \
+    m(TABLE), \
+    m(TO), \
+    m(UNION), \
+    m(UNIQUE), \
+    m(UPDATE), \
+    m(USER), \
+    m(VALUES), \
+    m(VIEW), \
+    m(WHENEVER), \
+    m(WHERE), \
+    m(WITH), \
+    m(WORK), \
+
+#define GENERATE_ENUM(m) KW_##m
+#define GENERATE_STRING(m) #m
+
 enum key_word
 {
-    KW_ALL,
-    KW_AND,
-    KW_ANY,
-    KW_AS,
-    KW_ASC,
-    KW_AUTHORIZATION,
-    KW_AVG,
-    KW_BEGIN,
-    KW_BETWEEN,
-    KW_BY,
-    KW_CHAR,
-    KW_CHARACTER,
-    KW_CHECK,
-    KW_CLOSE,
-    KW_COBOL,
-    KW_COMMIT,
-    KW_CONTINUE,
-    KW_COUNT,
-    KW_CREATE,
-    KW_CURRENT,
-    KW_CURSOR,
-    KW_DEC,
-    KW_DECIMAL,
-    KW_DECLARE,
-    KW_DELETE,
-    KW_DESC,
-    KW_DISTINCT,
-    KW_DOUBLE,
-    KW_END,
-    KW_ESCAPE,
-    KW_EXEC,
-    KW_EXISTS,
-    KW_FETCH,
-    KW_FLOAT,
-    KW_FOR,
-    KW_FORTRAN,
-    KW_FOUND,
-    KW_FROM,
-    KW_GO,
-    KW_GOTO,
-    KW_GRANT,
-    KW_GROUP,
-    KW_HAVING,
-    KW_IN,
-    KW_INDICATOR,
-    KW_INSERT,
-    KW_INT,
-    KW_INTEGER,
-    KW_INTO,
-    KW_IS,
-    KW_LANGUAGE,
-    KW_LIKE,
-    KW_MAX,
-    KW_MIN,
-    KW_MODULE,
-    KW_NOT,
-    KW_NULL,
-    KW_NUMERIC,
-    KW_OF,
-    KW_ON,
-    KW_OPEN,
-    KW_OPTION,
-    KW_OR,
-    KW_ORDER,
-    KW_PASCAL,
-    KW_PLI,
-    KW_PRECISION,
-    KW_PRIVILEGES,
-    KW_PROCEDURE,
-    KW_PUBLIC,
-    KW_REAL,
-    KW_ROLLBACK,
-    KW_SCHEMA,
-    KW_SECTION,
-    KW_SELECT,
-    KW_SET,
-    KW_SMALLINT,
-    KW_SOME,
-    KW_SQL,
-    KW_SQLCODE,
-    KW_SQLERROR,
-    KW_SUM,
-    KW_TABLE,
-    KW_TO,
-    KW_UNION,
-    KW_UNIQUE,
-    KW_UPDATE,
-    KW_USER,
-    KW_VALUES,
-    KW_VIEW,
-    KW_WHENEVER,
-    KW_WHERE,
-    KW_WITH,
-    KW_WORK,
+    KEY_WORD_LIST(GENERATE_ENUM)
     NUM_KEYWORDS
 };
 
 const char* key_words[NUM_KEYWORDS] =
 {
-    "ALL",
-    "AND",
-    "ANY",
-    "AS",
-    "ASC",
-    "AUTHORIZATION",
-    "AVG",
-    "BEGIN",
-    "BETWEEN",
-    "BY",
-    "CHAR",
-    "CHARACTER",
-    "CHECK",
-    "CLOSE",
-    "COBOL",
-    "COMMIT",
-    "CONTINUE",
-    "COUNT",
-    "CREATE",
-    "CURRENT",
-    "CURSOR",
-    "DEC",
-    "DECIMAL",
-    "DECLARE",
-    "DELETE",
-    "DESC",
-    "DISTINCT",
-    "DOUBLE",
-    "END",
-    "ESCAPE",
-    "EXEC",
-    "EXISTS",
-    "FETCH",
-    "FLOAT",
-    "FOR",
-    "FORTRAN",
-    "FOUND",
-    "FROM",
-    "GO",
-    "GOTO",
-    "GRANT",
-    "GROUP",
-    "HAVING",
-    "IN",
-    "INDICATOR",
-    "INSERT",
-    "INT",
-    "INTEGER",
-    "INTO",
-    "IS",
-    "LANGUAGE",
-    "LIKE",
-    "MAX",
-    "MIN",
-    "MODULE",
-    "NOT",
-    "NULL",
-    "NUMERIC",
-    "OF",
-    "ON",
-    "OPEN",
-    "OPTION",
-    "OR",
-    "ORDER",
-    "PASCAL",
-    "PLI",
-    "PRECISION",
-    "PRIVILEGES",
-    "PROCEDURE",
-    "PUBLIC",
-    "REAL",
-    "ROLLBACK",
-    "SCHEMA",
-    "SECTION",
-    "SELECT",
-    "SET",
-    "SMALLINT",
-    "SOME",
-    "SQL",
-    "SQLCODE",
-    "SQLERROR",
-    "SUM",
-    "TABLE",
-    "TO",
-    "UNION",
-    "UNIQUE",
-    "UPDATE",
-    "USER",
-    "VALUES",
-    "VIEW",
-    "WHENEVER",
-    "WHERE",
-    "WITH",
-    "WORK"
+    KEY_WORD_LIST(GENERATE_STRING)
 };
 
 //------------------------------------------------------------------------------
