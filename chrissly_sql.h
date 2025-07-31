@@ -538,7 +538,7 @@ chrissly_sql_server_open(void)
     listen_socket_thread = CreateThread(NULL, 0U, listen_socket_thread_proc, NULL, 0U, NULL);
 
     server_query_lock = CreateMutex(NULL, FALSE, NULL);
-#endif
+#endif // CHRISSLY_SQL_WINDOWS
 
     return CHRISSLY_SQL_OK;
 }
@@ -587,7 +587,7 @@ chrissly_sql_server_close(void)
 
     CloseHandle(server_query_lock);
     server_query_lock = NULL;
-#endif
+#endif // CHRISSLY_SQL_WINDOWS
 
     // free all resources
     if (tables != NULL)
@@ -845,7 +845,7 @@ chrissly_sql_client_connect(char const* ip_address)
         WSACleanup();
         return CHRISSLY_SQL_ERR;
     }
-#endif
+#endif // CHRISSLY_SQL_WINDOWS
 
     return CHRISSLY_SQL_OK;
 }
@@ -871,7 +871,7 @@ chrissly_sql_client_disconnect(void)
     closesocket(connect_socket);
     connect_socket = INVALID_SOCKET;
     WSACleanup();
-#endif
+#endif // CHRISSLY_SQL_WINDOWS
 
     return retval;
 }
@@ -933,9 +933,9 @@ chrissly_sql_client_query(char const* query, chrissly_sql_query_callback cb, voi
     {
         CHRISSLY_SQL_LOG("recv() failed with error: %d\n", WSAGetLastError());
     }
-#endif
+#endif // CHRISSLY_SQL_WINDOWS
 
     return CHRISSLY_SQL_OK;
 }
 
-#endif
+#endif // CHRISSLY_SQL_IMPLEMENTATION
