@@ -625,9 +625,6 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
     size_t result_column_count = 0U, result_numeric_storage_count = 0U;
     char result_numeric_storage[16U][NUMERIC_STORAGE_BUFFER_SIZE] = {{'\0'}};
 
-    struct table* new_table = NULL;
-    size_t column_offset = 0U;
-
     char str[DEFAULT_BUFLEN] = {'\0'};
     (void)strcpy_s(str, DEFAULT_BUFLEN, query);
     char* context = NULL;
@@ -640,6 +637,8 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
             if (KW_TABLE == parse_keyword(token))
             {
                 // create table
+                struct table* new_table = NULL;
+                size_t column_offset = 0U;
                 char* table_name = strtok_s(NULL, SEPARATORS, &context);
                 token = strtok_s(NULL, SEPARATORS, &context);
                 if (0 != strcmp(token, "(")) return CHRISSLY_SQL_ERR;
@@ -651,7 +650,6 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
                 new_table = &tables[num_tables - 1U];
                 memset(new_table, 0, sizeof(struct table));
                 strncpy_s(new_table->name, MAX_IDENTIFIER_LENGTH + 1U, table_name, MAX_IDENTIFIER_LENGTH + 1U);
-                column_offset = 0U;
                 token = strtok_s(NULL, SEPARATORS, &context);
                 while (token != NULL && 0 != strcmp(token, ")"))
                 {
