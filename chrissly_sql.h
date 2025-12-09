@@ -50,18 +50,18 @@ typedef void(*chrissly_sql_query_callback)(size_t, char**, size_t, char**, void*
 chrissly_sql_error chrissly_sql_server_open(void);
 // close connections to clients
 chrissly_sql_error chrissly_sql_server_close(void);
-chrissly_sql_error chrissly_sql_server_create_db(char const* file_name);
-chrissly_sql_error chrissly_sql_server_load_db(char const* file_name);
+chrissly_sql_error chrissly_sql_server_create_db(const char* const file_name);
+chrissly_sql_error chrissly_sql_server_load_db(const char* const file_name);
 chrissly_sql_error chrissly_sql_server_save_db(void);
 // executes query and waits for the result
-chrissly_sql_error chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, void* user_data);
+chrissly_sql_error chrissly_sql_server_query(const char* const query, chrissly_sql_query_callback cb, void* user_data);
 
 // connects client to the sql server at the given ip-address/hostname
-chrissly_sql_error chrissly_sql_client_connect(char const* ip_address);
+chrissly_sql_error chrissly_sql_client_connect(const char* const ip_address);
 // close connection to server
 chrissly_sql_error chrissly_sql_client_disconnect(void);
 // sends query and waits for the result (blocking)
-chrissly_sql_error chrissly_sql_client_query(char const* query, chrissly_sql_query_callback cb, void* user_data);
+chrissly_sql_error chrissly_sql_client_query(const char* const query, chrissly_sql_query_callback cb, void* user_data);
 
 #endif
 
@@ -294,12 +294,52 @@ static size_t num_tables = 0U;
 static struct table* tables = NULL;
 
 //------------------------------------------------------------------------------
-// SQL query parser
+// SQL query lexer and parser
 //------------------------------------------------------------------------------
-#define NUMERIC_STORAGE_BUFFER_SIZE 16U
+static char* lexer_parse_point = NULL;
+static char lexer_token_buffer[32U] = {'\0'};
+
+static void
+lexer_init(const char* const str)
+{
+    lexer_parse_point = (char*)str;
+}
+
+static char*
+lexer_get_token()
+{
+    // skip whitespace
+    while (*lexer_parse_point == SEPARATORS[0U] || *lexer_parse_point == SEPARATORS[1U]) ++lexer_parse_point;
+
+    unsigned int i = 0U;
+    char* p = lexer_parse_point;
+    switch (*p)
+    {
+        case '\0': return NULL;
+
+        case '(': ++lexer_parse_point; return "(";
+        case ')': ++lexer_parse_point; return ")";
+        case ',': ++lexer_parse_point; return ",";
+        case ';': ++lexer_parse_point; return ";";
+        case '*': ++lexer_parse_point; return "*";
+
+        case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9':
+            while (*p >= '0' && *p <= '9') lexer_token_buffer[i++] = *p++;
+            lexer_token_buffer[i] = '\0';
+            lexer_parse_point = p;
+            return lexer_token_buffer;
+
+        default:
+            if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || *p == '_')) return NULL; // invalid or unsupported token
+            while ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || *p == '_') lexer_token_buffer[i++] = *p++;
+            lexer_token_buffer[i] = '\0';
+            lexer_parse_point = p;
+            return lexer_token_buffer;
+    }
+}
 
 static int
-parse_keyword(const char* token)
+parse_keyword(const char* const token)
 {
     if (NULL == token) return -1;
     unsigned int i;
@@ -311,7 +351,7 @@ parse_keyword(const char* token)
 }
 
 static struct table*
-get_table_by_name(const char* name)
+get_table_by_name(const char* const name)
 {
     size_t i;
     for (i = 0U; i < num_tables; ++i)
@@ -320,6 +360,8 @@ get_table_by_name(const char* name)
     }
     return NULL;
 }
+
+#define NUMERIC_STORAGE_BUFFER_SIZE 16U
 
 //------------------------------------------------------------------------------
 // Windows backend
@@ -609,13 +651,10 @@ chrissly_sql_server_close(void)
 //------------------------------------------------------------------------------
 /**
     ToDo:
-      - replace strtok() with proper lexer, see chapter "5.3 <token>", for now
-      every delimiter needs a leading and a trailing separator (space or tab)
       - check if tablename is upper case
-      - check if table already exists
 */
 chrissly_sql_error
-chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, void* user_data)
+chrissly_sql_server_query(const char* const query, chrissly_sql_query_callback cb, void* user_data)
 {
 #ifdef CHRISSLY_SQL_WINDOWS
     WaitForSingleObject(server_query_lock, INFINITE);
@@ -625,22 +664,23 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
     size_t result_column_count = 0U, result_numeric_storage_count = 0U;
     char result_numeric_storage[16U][NUMERIC_STORAGE_BUFFER_SIZE] = {{'\0'}};
 
-    char str[DEFAULT_BUFLEN] = {'\0'};
-    (void)strcpy_s(str, DEFAULT_BUFLEN, query);
-    char* context = NULL;
-    char* token = strtok_s(str, SEPARATORS, &context);
+    lexer_init(query);
+
+    char* token = lexer_get_token();
     while (token != NULL)
     {
         if (KW_CREATE == parse_keyword(token))
         {
-            token = strtok_s(NULL, SEPARATORS, &context);
+            token = lexer_get_token();
             if (KW_TABLE == parse_keyword(token))
             {
                 // create table
                 struct table* new_table = NULL;
                 size_t column_offset = 0U;
-                char* table_name = strtok_s(NULL, SEPARATORS, &context);
-                token = strtok_s(NULL, SEPARATORS, &context);
+                char* table_name = lexer_get_token();
+                if (get_table_by_name(table_name) != NULL) return CHRISSLY_SQL_ERR;
+
+                token = lexer_get_token();
                 if (0 != strcmp(token, "(")) return CHRISSLY_SQL_ERR;
 
                 ++num_tables;
@@ -650,11 +690,11 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
                 new_table = &tables[num_tables - 1U];
                 memset(new_table, 0, sizeof(struct table));
                 strncpy_s(new_table->name, MAX_IDENTIFIER_LENGTH + 1U, table_name, MAX_IDENTIFIER_LENGTH + 1U);
-                token = strtok_s(NULL, SEPARATORS, &context);
+                token = lexer_get_token();
                 while (token != NULL && 0 != strcmp(token, ")"))
                 {
                     // create column
-                    if (0 == strcmp(token, ",")) token = strtok_s(NULL, SEPARATORS, &context);
+                    if (0 == strcmp(token, ",")) token = lexer_get_token();
                     char* column_name = token;
                     ++new_table->num_columns;
                     struct column* column_alloc = realloc(new_table->columns, new_table->num_columns * sizeof(struct column));
@@ -663,7 +703,7 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
                     struct column* new_column = &new_table->columns[new_table->num_columns - 1U];
                     strncpy_s(new_column->name, MAX_IDENTIFIER_LENGTH + 1U, column_name, MAX_IDENTIFIER_LENGTH + 1U);
                     new_column->offset = column_offset;
-                    token = strtok_s(NULL, SEPARATORS, &context);
+                    token = lexer_get_token();
                     switch (parse_keyword(token))
                     {
                         case KW_INTEGER:
@@ -680,25 +720,25 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
                     }
                     result_columns[result_column_count] = column_name;
                     ++result_column_count;
-                    token = strtok_s(NULL, SEPARATORS, &context);
+                    token = lexer_get_token();
                 }
             }
             if (cb != NULL) cb(result_column_count, result_columns, 0U, NULL, user_data);
         }
         else if (KW_INSERT == parse_keyword(token))
         {
-            token = strtok_s(NULL, SEPARATORS, &context);
+            token = lexer_get_token();
             if (KW_INTO != parse_keyword(token)) return CHRISSLY_SQL_ERR;
 
             // insert into table
-            token = strtok_s(NULL, SEPARATORS, &context);
+            token = lexer_get_token();
             struct table* t = get_table_by_name(token);
             if (NULL == t) return CHRISSLY_SQL_ERR;
 
-            token = strtok_s(NULL, SEPARATORS, &context);
+            token = lexer_get_token();
             if (KW_VALUES != parse_keyword(token)) return CHRISSLY_SQL_ERR;
 
-            token = strtok_s(NULL, SEPARATORS, &context);
+            token = lexer_get_token();
             if (0 != strcmp(token, "(")) return CHRISSLY_SQL_ERR;
 
             ++t->num_rows;
@@ -709,8 +749,8 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
             size_t c;
             for (c = 0U; c < t->num_columns; ++c)
             {
-                token = strtok_s(NULL, SEPARATORS, &context);
-                if (0 == strcmp(token, ",")) token = strtok_s(NULL, SEPARATORS, &context);
+                token = lexer_get_token();
+                if (0 == strcmp(token, ",")) token = lexer_get_token();
                 switch (t->columns[c].type)
                 {
                     case DT_INTEGER:
@@ -732,14 +772,14 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
         }
         else if (KW_SELECT == parse_keyword(token))
         {
-            token = strtok_s(NULL, SEPARATORS, &context);
+            token = lexer_get_token();
             if (0 == strcmp(token, "*"))
             {
-                token = strtok_s(NULL, SEPARATORS, &context);
+                token = lexer_get_token();
                 if (KW_FROM != parse_keyword(token)) return CHRISSLY_SQL_ERR;
 
                 // select all from table
-                token = strtok_s(NULL, SEPARATORS, &context);
+                token = lexer_get_token();
                 struct table* t = get_table_by_name(token);
                 if (NULL == t) return CHRISSLY_SQL_ERR;
                 char* row = (char*)t->rows;
@@ -771,7 +811,7 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
             }
             result_numeric_storage_count = 0U;
         }
-        token = strtok_s(NULL, SEPARATORS, &context);
+        token = lexer_get_token();
     }
 #ifdef CHRISSLY_SQL_WINDOWS
     ReleaseMutex(server_query_lock);
@@ -783,7 +823,7 @@ chrissly_sql_server_query(char const* query, chrissly_sql_query_callback cb, voi
 /**
 */
 chrissly_sql_error
-chrissly_sql_client_connect(char const* ip_address)
+chrissly_sql_client_connect(const char* const ip_address)
 {
 #ifdef CHRISSLY_SQL_WINDOWS
     // initialize Winsock
@@ -878,7 +918,7 @@ chrissly_sql_client_disconnect(void)
 /**
 */
 chrissly_sql_error
-chrissly_sql_client_query(char const* query, chrissly_sql_query_callback cb, void* user_data)
+chrissly_sql_client_query(const char* const query, chrissly_sql_query_callback cb, void* user_data)
 {
 #ifdef CHRISSLY_SQL_WINDOWS
     // send an buffer
