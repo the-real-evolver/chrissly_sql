@@ -306,7 +306,7 @@ lexer_init(const char* const str)
 }
 
 static char*
-lexer_get_token()
+lexer_get_token(void)
 {
     // skip whitespace
     while (*lexer_parse_point == SEPARATORS[0U] || *lexer_parse_point == SEPARATORS[1U]) ++lexer_parse_point;
@@ -412,7 +412,10 @@ client_socket_thread_proc(_In_ LPVOID lpParameter)
             CHRISSLY_SQL_LOG("query received (%d bytes)\n", error);
             recv_buf[error < DEFAULT_BUFLEN ? error : DEFAULT_BUFLEN - 1U] = '\0';
 
-            chrissly_sql_server_query(recv_buf, server_query_result_callback, (void*)client_index);
+            WaitForSingleObject(server_query_lock, INFINITE);
+            chrissly_sql_error query_error = chrissly_sql_server_query(recv_buf, server_query_result_callback, (void*)client_index);
+            if (CHRISSLY_SQL_ERR == query_error) memcpy(query_results[client_index], "1\0" "Error\0" "0\0", 10U);
+            ReleaseMutex(server_query_lock);
 
             // send query result back to the client
             int send_result = send(connections[client_index].socket, query_results[client_index], DEFAULT_BUFLEN, 0);
@@ -656,9 +659,6 @@ chrissly_sql_server_close(void)
 chrissly_sql_error
 chrissly_sql_server_query(const char* const query, chrissly_sql_query_callback cb, void* user_data)
 {
-#ifdef CHRISSLY_SQL_WINDOWS
-    WaitForSingleObject(server_query_lock, INFINITE);
-#endif
     char* result_columns[16U] = {'\0'};
     char* result_values[16U] = {'\0'};
     size_t result_column_count = 0U, result_numeric_storage_count = 0U;
@@ -813,9 +813,7 @@ chrissly_sql_server_query(const char* const query, chrissly_sql_query_callback c
         }
         token = lexer_get_token();
     }
-#ifdef CHRISSLY_SQL_WINDOWS
-    ReleaseMutex(server_query_lock);
-#endif
+
     return CHRISSLY_SQL_OK;
 }
 
