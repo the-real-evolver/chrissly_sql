@@ -1,5 +1,5 @@
 # Chrissly SQL (WIP)
-   A single-header file library that implements a minimal sql server and client. Aims for SQL-86 standard.
+   A single-header file library that implements a minimal sql database, server and client. Aims for SQL-86 standard.
 ## Motivation
 ## Usage
 ### Server

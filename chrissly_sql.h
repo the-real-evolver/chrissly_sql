@@ -2,7 +2,7 @@
 /**
     chrissly_sql.h
 
-    A single-header file library that implements a minimal sql server
+    A single-header file library that implements a minimal sql database, server
     and client.
 
     The goal is to support the SQL-86 standard. The implementation will primarily
@@ -100,7 +100,8 @@ chrissly_sql_log(const char* const msg, ...)
 #define DEFAULT_BUFLEN 512U
 #define MAX_CONNECTIONS 4U
 
-static char query_results[MAX_CONNECTIONS][DEFAULT_BUFLEN];
+static char query_results[MAX_CONNECTIONS][DEFAULT_BUFLEN] = {0};
+static size_t query_results_length[MAX_CONNECTIONS] = {0};
 
 static void
 server_query_result_callback(size_t column_count, char** columns, size_t row_count, char** values, void* user_data)
@@ -117,6 +118,7 @@ server_query_result_callback(size_t column_count, char** columns, size_t row_cou
     {
         strcpy_s(p, DEFAULT_BUFLEN - (p - s), values[i]); p += strlen(values[i]) + 1U;
     }
+    query_results_length[(uintptr_t)user_data] = (p - s);
 }
 
 //------------------------------------------------------------------------------
@@ -414,11 +416,15 @@ client_socket_thread_proc(_In_ LPVOID lpParameter)
 
             WaitForSingleObject(server_query_lock, INFINITE);
             chrissly_sql_error query_error = chrissly_sql_server_query(recv_buf, server_query_result_callback, (void*)client_index);
-            if (CHRISSLY_SQL_ERR == query_error) memcpy(query_results[client_index], "1\0" "Error\0" "0\0", 10U);
+            if (CHRISSLY_SQL_ERR == query_error)
+            {
+                memcpy(query_results[client_index], "1\0" "Error\0" "0\0", 10U);
+                query_results_length[client_index] = 10U;
+            }
             ReleaseMutex(server_query_lock);
 
             // send query result back to the client
-            int send_result = send(connections[client_index].socket, query_results[client_index], DEFAULT_BUFLEN, 0);
+            int send_result = send(connections[client_index].socket, query_results[client_index], (int)query_results_length[client_index], 0);
             if (SOCKET_ERROR == send_result)
             {
                 CHRISSLY_SQL_LOG("send() failed with error: %d\n", WSAGetLastError());
@@ -718,7 +724,7 @@ chrissly_sql_server_query(const char* const query, chrissly_sql_query_callback c
                             new_column->size = 0U;
                             break;
                     }
-                    result_columns[result_column_count] = column_name;
+                    result_columns[result_column_count] = new_column->name;
                     ++result_column_count;
                     token = lexer_get_token();
                 }
