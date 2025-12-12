@@ -97,8 +97,12 @@ chrissly_sql_log(const char* const msg, ...)
 
 #define CHRISSLY_SQL_UNREFERENCED_PARAMETER(P) (P)
 
-#define DEFAULT_BUFLEN 512U
 #define MAX_CONNECTIONS 4U
+#define DEFAULT_BUFLEN 4096U
+
+#define NUMERIC_STORAGE_BUFFER_SIZE 16U
+#define MAX_RESULT_COLUMNS 16U
+#define MAX_RESULT_ROWS 16U
 
 static char query_results[MAX_CONNECTIONS][DEFAULT_BUFLEN] = {0};
 static size_t query_results_length[MAX_CONNECTIONS] = {0};
@@ -118,7 +122,7 @@ server_query_result_callback(size_t column_count, char** columns, size_t row_cou
     {
         strcpy_s(p, DEFAULT_BUFLEN - (p - s), values[i]); p += strlen(values[i]) + 1U;
     }
-    query_results_length[(uintptr_t)user_data] = (p - s);
+    query_results_length[(uintptr_t)user_data] = p - s;
 }
 
 //------------------------------------------------------------------------------
@@ -362,8 +366,6 @@ get_table_by_name(const char* const name)
     }
     return NULL;
 }
-
-#define NUMERIC_STORAGE_BUFFER_SIZE 16U
 
 //------------------------------------------------------------------------------
 // Windows backend
@@ -665,10 +667,10 @@ chrissly_sql_server_close(void)
 chrissly_sql_error
 chrissly_sql_server_query(const char* const query, chrissly_sql_query_callback cb, void* user_data)
 {
-    char* result_columns[16U] = {'\0'};
-    char* result_values[16U] = {'\0'};
+    static char* result_columns[MAX_RESULT_COLUMNS] = {'\0'};
+    static char* result_values[MAX_RESULT_COLUMNS * MAX_RESULT_ROWS] = {'\0'};
     size_t result_column_count = 0U, result_numeric_storage_count = 0U;
-    char result_numeric_storage[16U][NUMERIC_STORAGE_BUFFER_SIZE] = {{'\0'}};
+    static char result_numeric_storage[MAX_RESULT_COLUMNS * MAX_RESULT_ROWS][NUMERIC_STORAGE_BUFFER_SIZE] = {{'\0'}};
 
     lexer_init(query);
 
@@ -951,14 +953,14 @@ chrissly_sql_client_query(const char* const query, chrissly_sql_query_callback c
         recv_buf[error < DEFAULT_BUFLEN ? error : DEFAULT_BUFLEN - 1U] = '\0';
         if (cb != NULL)
         {
-            char* columns[16U] = {0};
+            char* columns[MAX_RESULT_COLUMNS] = {0};
             char* p = recv_buf;
             size_t i, column_count = atoi(p); p += strlen(p) + 1U;
             for (i = 0U; i < column_count; ++i)
             {
                 columns[i] = p; p += strlen(p) + 1U;
             }
-            char* values[16U] = {0};
+            char* values[MAX_RESULT_COLUMNS * MAX_RESULT_ROWS] = {0};
             size_t row_count = atoi(p); p += strlen(p) + 1U;
             for (i = 0U; i < row_count * column_count; ++i)
             {
